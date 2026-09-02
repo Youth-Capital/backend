@@ -1,0 +1,28 @@
+# Core
+Django==5.2.17
+djangorestframework==3.16.1
+djangorestframework-simplejwt==5.5.1
+
+# Database
+psycopg[binary]==3.2.9
+dj-database-url==3.0.1
+
+# Config
+django-environ==0.12.0
+
+# API
+django-filter==25.1
+drf-spectacular==0.28.0
+django-cors-headers==4.7.0
+
+# Security
+argon2-cffi==25.1.0
+django-axes==8.0.0
+
+# Media / utils
+Pillow==12.3.0
+python-dateutil==2.9.0.post0
+
+# Optional: only imported when an Anthropic provider is activated in the
+# admin. The platform runs fully without it on the rule-based provider.
+anthropic>=1.0

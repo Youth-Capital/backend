@@ -1,0 +1,6 @@
+-r base.txt
+
+gunicorn==23.0.0
+whitenoise[brotli]==6.9.0
+django-csp==4.0
+sentry-sdk[django]==2.34.1
