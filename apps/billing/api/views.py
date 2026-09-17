@@ -60,7 +60,7 @@ class MySubscriptionView(APIView):
         }
     )
     def get(self, request):
-        # Mentors and admins are not customers, so no plan is defined for them.
+        # Admins are not customers, so no plan is defined for them.
         # Without this guard `ensure_subscription` raises and the endpoint 500s
         # for a perfectly valid, authenticated user.
         if default_plan_for(request.user.role) is None:

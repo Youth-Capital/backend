@@ -58,6 +58,14 @@ class CVDocument(BaseModel):
     )
     is_primary = models.BooleanField(default=False)
 
+    #: Cached CV quality rating (apps/cv/rating.py). Stored rather than always
+    #: computed because a candidate list ranks fifty CVs at once, and six
+    #: queries per candidate is not a list — it is a timeout. The breakdown
+    #: travels with the number so the employer sees what it is made of.
+    quality_score = models.PositiveSmallIntegerField(default=0)
+    quality_breakdown = models.JSONField(default=dict, blank=True)
+    quality_computed_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         db_table = "cv_document"
         ordering = ["-is_primary", "-updated_at"]

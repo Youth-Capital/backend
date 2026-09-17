@@ -49,7 +49,6 @@ def get_platform_overview() -> dict:
         "total_users": User.objects.count(),
         "students": User.objects.filter(role=Role.STUDENT).count(),
         "employers": User.objects.filter(role=Role.EMPLOYER).count(),
-        "mentors": User.objects.filter(role=Role.MENTOR).count(),
         "active_users_30d": User.objects.filter(last_login__gte=active_since).count(),
         "courses": Course.objects.count(),
         "courses_published": Course.objects.filter(

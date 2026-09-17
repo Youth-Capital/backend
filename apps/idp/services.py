@@ -1,7 +1,7 @@
 """Individual Development Plan services.
 
 The plan is a proposal the user owns: generated from real gaps, editable, and
-reviewable by a mentor (TZ §13). Nothing here writes a plan the student cannot
+reviewable by the learner (TZ §13). Nothing here writes a plan they cannot
 change.
 """
 
@@ -35,12 +35,41 @@ from .models import (
 # Milestone and task titles already worked this way — descriptions, the plan
 # title and the summary did not, and showed English inside a Russian page.
 
-#: A 90-day plan split into three monthly milestones (TZ §19).
-DEFAULT_MILESTONES = [
-    ("plan.milestone.foundation", 30),
-    ("plan.milestone.build", 60),
-    ("plan.milestone.prove", 90),
+#: The three phases every plan moves through, whatever its length (TZ §19):
+#: build the foundation, build on it, prove it.
+#:
+#: They used to be fixed calendar offsets — day 30, day 60, day 90 — and only
+#: the ones that fitted inside the period were created. That was invisible
+#: while every plan was 90 days and wrong the moment one was not: a 30-day
+#: plan got a single milestone, and a 15-day plan got none at all, which is a
+#: plan with no structure and one task fewer than it should have had.
+#:
+#: The phases are shares of the period instead, so the shape of a plan is the
+#: same at any length and only the dates move.
+MILESTONE_PHASES = [
+    ("plan.milestone.foundation", 1 / 3),
+    ("plan.milestone.build", 2 / 3),
+    ("plan.milestone.prove", 1.0),
 ]
+
+
+def milestone_offsets(period_days: int) -> list[tuple[str, int]]:
+    """Each phase's title and the day it is due, inside `period_days`.
+
+    Every phase lands on a distinct day and the last one lands on the final
+    day exactly. At the shortest period the API allows — 14 days — that gives
+    days 5, 9 and 14; at 90 it gives the 30/60/90 this replaced.
+    """
+    offsets: list[tuple[str, int]] = []
+    previous = 0
+    for index, (key, share) in enumerate(MILESTONE_PHASES):
+        remaining = len(MILESTONE_PHASES) - index - 1
+        #: Never on the same day as the phase before it, and never so late
+        #: that the phases after it have nowhere left to go.
+        day = max(previous + 1, min(round(period_days * share), period_days - remaining))
+        offsets.append((key, day))
+        previous = day
+    return offsets
 
 
 @transaction.atomic
@@ -95,8 +124,7 @@ def create_plan_from_gap(
             due_date=start + timedelta(days=offset),
             order=index,
         )
-        for index, (key, offset) in enumerate(DEFAULT_MILESTONES)
-        if offset <= period_days
+        for index, (key, offset) in enumerate(milestone_offsets(period_days))
     ]
 
     tasks = _build_tasks(user, profession, plan, milestones)
@@ -207,7 +235,7 @@ def _build_tasks(user, profession, plan, milestones) -> list[Task]:
             Task.objects.create(
                 user=user,
                 plan=plan,
-                milestone=milestones[-1],
+                milestone=milestones[-1] if milestones else None,
                 title="plan.task.build_portfolio_project",
                 description="plan.desc.portfolio",
                 type=TaskType.PROJECT,

@@ -23,13 +23,13 @@ api_v1 = [
     path("experience/", include("apps.experience.api.urls")),
     path("cv/", include("apps.cv.api.urls")),
     path("jobs/", include("apps.jobs.api.urls")),
-    path("mentorship/", include("apps.mentorship.api.urls")),
     path("matching/", include("apps.matching.api.urls")),
     path("ai/", include("apps.ai.api.urls")),
     path("notifications/", include("apps.notifications.api.urls")),
     path("analytics/", include("apps.analytics.api.urls")),
     path("billing/", include("apps.billing.api.urls")),
     path("audit/", include("apps.audit.api.urls")),
+    path("feedback/", include("apps.feedback.api.urls")),
 ]
 
 urlpatterns = [

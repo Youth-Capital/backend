@@ -31,9 +31,6 @@ class RegisterSerializer(serializers.Serializer):
     company_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
     legal_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
 
-    # Mentor fields
-    headline = serializers.CharField(required=False, allow_blank=True, max_length=200)
-
     def validate_email(self, value: str) -> str:
         value = value.strip().lower()
         if User.objects.filter(email__iexact=value).exists():
@@ -120,17 +117,6 @@ class UserSerializer(serializers.ModelSerializer):
                 "slug": company.slug,
                 "logo": company.logo.url if company.logo else None,
                 "verification_status": company.verification_status,
-            }
-        if user.role == Role.MENTOR:
-            mentor = getattr(user, "mentor_profile", None)
-            if mentor is None:
-                return None
-            return {
-                "id": str(mentor.id),
-                "name": mentor.full_name,
-                "headline": mentor.headline,
-                "avatar": mentor.avatar.url if mentor.avatar else None,
-                "verification_status": mentor.verification_status,
             }
         return None
 

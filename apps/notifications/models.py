@@ -21,9 +21,8 @@ class NotificationType(models.TextChoices):
     APPLICATION_STATUS = "APPLICATION_STATUS", _("Application status changed")
     NEW_APPLICATION = "NEW_APPLICATION", _("New application received")
     INTERVIEW_SCHEDULED = "INTERVIEW_SCHEDULED", _("Interview scheduled")
-    MENTOR_REQUEST = "MENTOR_REQUEST", _("Mentor session requested")
-    MENTOR_RESPONSE = "MENTOR_RESPONSE", _("Mentor responded")
     MODERATION_RESULT = "MODERATION_RESULT", _("Moderation decision")
+    REVIEW_REQUEST = "REVIEW_REQUEST", _("Asked for feedback on the platform")
     SYSTEM = "SYSTEM", _("System message")
 
 

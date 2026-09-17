@@ -35,8 +35,6 @@ class EventName(models.TextChoices):
     APPLICATION_STATUS_CHANGED = "application_status_changed", "Application status changed"
     INTERVIEW_SCHEDULED = "interview_scheduled", "Interview scheduled"
     HIRED = "hired", "Hired"
-    MENTOR_SESSION_REQUESTED = "mentor_session_requested", "Mentor session requested"
-    MENTOR_SESSION_COMPLETED = "mentor_session_completed", "Mentor session completed"
     RECOMMENDATION_ACCEPTED = "recommendation_accepted", "Recommendation accepted"
     RECOMMENDATION_DISMISSED = "recommendation_dismissed", "Recommendation dismissed"
 

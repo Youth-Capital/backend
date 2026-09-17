@@ -32,7 +32,6 @@ class GoalStatus(models.TextChoices):
 class Origin(models.TextChoices):
     USER = "USER", _("User")
     AI = "AI", _("AI generated")
-    MENTOR = "MENTOR", _("Mentor")
 
 
 class Goal(BaseModel):
@@ -170,7 +169,6 @@ class TaskType(models.TextChoices):
     TEST = "TEST", _("Pass a test")
     PROJECT = "PROJECT", _("Build a project")
     APPLICATION = "APPLICATION", _("Apply to a vacancy")
-    MENTOR_SESSION = "MENTOR_SESSION", _("Book a mentor session")
     PROFILE = "PROFILE", _("Complete your profile")
     CUSTOM = "CUSTOM", _("Custom")
 

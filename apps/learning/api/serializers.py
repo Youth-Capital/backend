@@ -5,7 +5,11 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from apps.common.serializers import TranslatedField
-from apps.common.validators import validate_document_upload
+from apps.common.validators import (
+    validate_book_upload,
+    validate_document_upload,
+    validate_image_upload,
+)
 
 from ..models import (
     Certificate,
@@ -311,10 +315,19 @@ class CourseModuleWriteSerializer(serializers.ModelSerializer):
 
 
 class CourseMaterialSerializer(serializers.ModelSerializer):
-    """A file or a link. The `file_url` is what a page links to."""
+    """A file or a link. The `file_url` is what a page links to.
+
+    `video` is present only for VIDEO materials and is built by
+    apps/learning/video.py rather than passed through. That module extracts an
+    id, checks it character by character, and assembles an embed URL itself —
+    so what reaches an iframe is an address the platform wrote, not one an
+    author pasted. The same treatment a lesson's own video already gets; a
+    material is no less of a hole if it is left open.
+    """
 
     file_url = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
+    video = serializers.SerializerMethodField()
 
     class Meta:
         model = CourseMaterial
@@ -329,10 +342,11 @@ class CourseMaterialSerializer(serializers.ModelSerializer):
             "file_url",
             "file_size",
             "url",
+            "video",
             "order",
             "created_at",
         ]
-        read_only_fields = ["id", "file_url", "file_size", "created_at"]
+        read_only_fields = ["id", "file_url", "file_size", "video", "created_at"]
         extra_kwargs = {"file": {"write_only": True, "required": False}}
 
     def get_file_url(self, material) -> str | None:
@@ -341,6 +355,13 @@ class CourseMaterialSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         url = material.file.url
         return request.build_absolute_uri(url) if request else url
+
+    def get_video(self, material) -> dict | None:
+        if material.kind != "VIDEO":
+            return None
+        from ..video import describe_video
+
+        return describe_video(material.url)
 
     def get_file_size(self, material) -> int | None:
         if not material.file:
@@ -357,14 +378,61 @@ class CourseMaterialSerializer(serializers.ModelSerializer):
         file = attrs.get("file", getattr(self.instance, "file", None))
         url = attrs.get("url", getattr(self.instance, "url", ""))
 
-        if kind == "FILE":
+        if kind in {"FILE", "IMAGE"}:
             if not file:
                 raise serializers.ValidationError(
                     {"file": _("Attach a file, or add it as a link instead.")}
                 )
-            validate_document_upload(file)
-        elif not url:
+            # Different validators on purpose. A PDF is checked for the %PDF-
+            # header; an image is decoded by Pillow and checked for its pixel
+            # count, because a 20000x20000 single-colour PNG is a megabyte on
+            # disk and 1.2 GB in whatever opens it next.
+            if kind == "IMAGE":
+                validate_image_upload(file)
+            else:
+                validate_document_upload(file)
+            return attrs
+
+        if kind == "BOOK":
+            # A book is a file when the author has it, and a link when they do
+            # not. It used to be a link only, on the reasoning that the
+            # platform does not host books -- true of a citation, and simply
+            # wrong about an author who has the PDF sitting on their desktop
+            # and no way to attach it. Both are allowed now, and the file is
+            # the one the interface offers first.
+            #
+            # Its own validator: PDF or EPUB, and its own size cap, because a
+            # book is not a worksheet and 5 MB is not a book.
+            if file:
+                validate_book_upload(file)
+                return attrs
+            if not url:
+                raise serializers.ValidationError(
+                    {"file": _("Attach the book, or give a link to it.")}
+                )
+            return attrs
+
+        if not url:
             raise serializers.ValidationError(
                 {"url": _("A link is required for this kind of material.")}
             )
+
+        if kind == "VIDEO":
+            from ..video import describe_video
+
+            described = describe_video(url)
+            if not described or not described.get("embed_url"):
+                # Refused rather than quietly downgraded to a LINK. An author
+                # who picked "video" is expecting a player on the lesson page,
+                # and silently storing a link that renders as a bare anchor
+                # would be a surprise found later by a learner, not now by the
+                # person who can fix it.
+                raise serializers.ValidationError(
+                    {
+                        "url": _(
+                            "Paste a YouTube or Vimeo link. Anything else can be "
+                            "added as a link instead."
+                        )
+                    }
+                )
         return attrs

@@ -8,7 +8,6 @@ from apps.taxonomy.api.serializers import ProfessionListSerializer, RegionSerial
 from ..models import (
     Education,
     EmployerProfile,
-    MentorProfile,
     SkillEvidence,
     StudentProfile,
     UserSkill,
@@ -31,6 +30,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             "youth_id",
             "first_name",
             "last_name",
+            "middle_name",
             "full_name",
             "birth_date",
             "age",
@@ -127,48 +127,6 @@ class EmployerProfileSerializer(serializers.ModelSerializer):
             "is_active",
         ]
 
-
-class MentorProfileSerializer(serializers.ModelSerializer):
-    full_name = serializers.CharField(read_only=True)
-    expertise_detail = serializers.SerializerMethodField()
-
-    class Meta:
-        model = MentorProfile
-        fields = [
-            "id",
-            "first_name",
-            "last_name",
-            "full_name",
-            "headline",
-            "bio",
-            "avatar",
-            "expertise",
-            "expertise_detail",
-            "professions",
-            "years_experience",
-            "is_free",
-            "hourly_rate",
-            "currency",
-            "languages",
-            "availability",
-            "rating_avg",
-            "rating_count",
-            "sessions_count",
-            "accepting_students",
-            "verification_status",
-        ]
-        read_only_fields = [
-            "id",
-            "rating_avg",
-            "rating_count",
-            "sessions_count",
-            "verification_status",
-        ]
-
-    def get_expertise_detail(self, mentor) -> list[dict]:
-        return [
-            {"id": str(skill.id), "name": skill.name} for skill in mentor.expertise.all()
-        ]
 
 
 class SkillEvidenceSerializer(serializers.ModelSerializer):

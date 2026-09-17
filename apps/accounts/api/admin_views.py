@@ -59,15 +59,6 @@ class AdminUserSerializer(serializers.ModelSerializer):
                 "company": company.display_name,
                 "verification_status": company.verification_status,
             }
-        if user.role == Role.MENTOR:
-            mentor = getattr(user, "mentor_profile", None)
-            if mentor is None:
-                return {}
-            return {
-                "headline": mentor.headline,
-                "verification_status": mentor.verification_status,
-                "sessions": mentor.sessions_count,
-            }
         return {}
 
 
@@ -81,7 +72,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = User.objects.select_related(
-            "student_profile__region", "employer_profile", "mentor_profile"
+            "student_profile__region", "employer_profile"
         ).order_by("-date_joined")
 
         search = self.request.query_params.get("search")
@@ -179,21 +170,17 @@ class AdminUserViewSet(viewsets.ModelViewSet):
 
 @extend_schema(tags=["admin"])
 class EmployerVerificationViewSet(viewsets.ViewSet):
-    """Approve or reject employer and mentor verification."""
+    """Approve or reject employer verification."""
 
     permission_classes = [IsAdmin]
 
     def list(self, request):
         from apps.common.enums import VerificationStatus
-        from apps.profiles.models import EmployerProfile, MentorProfile
+        from apps.profiles.models import EmployerProfile
 
         employers = EmployerProfile.objects.filter(
             verification_status=VerificationStatus.PENDING
         ).select_related("owner", "region")
-        mentors = MentorProfile.objects.filter(
-            verification_status=VerificationStatus.PENDING
-        ).select_related("user")
-
         return Response(
             {
                 "employers": [
@@ -207,17 +194,6 @@ class EmployerVerificationViewSet(viewsets.ViewSet):
                         "created_at": company.created_at,
                     }
                     for company in employers
-                ],
-                "mentors": [
-                    {
-                        "id": str(mentor.id),
-                        "name": mentor.full_name,
-                        "headline": mentor.headline,
-                        "email": mentor.user.email,
-                        "years_experience": mentor.years_experience,
-                        "created_at": mentor.created_at,
-                    }
-                    for mentor in mentors
                 ],
             }
         )
@@ -255,26 +231,3 @@ class EmployerVerificationViewSet(viewsets.ViewSet):
             severity=AuditSeverity.NOTICE,
         )
         return Response({"verification_status": company.verification_status})
-
-    @action(detail=False, methods=["post"], url_path="mentor")
-    def verify_mentor(self, request):
-        from apps.common.enums import VerificationStatus
-        from apps.profiles.models import MentorProfile
-
-        mentor = MentorProfile.objects.filter(id=request.data.get("id")).first()
-        if mentor is None:
-            raise DomainError("Unknown mentor.", code="not_found")
-
-        approve = bool(request.data.get("approve"))
-        mentor.verification_status = (
-            VerificationStatus.VERIFIED if approve else VerificationStatus.REJECTED
-        )
-        mentor.save(update_fields=["verification_status", "updated_at"])
-        log_action(
-            action=AuditAction.MODERATE,
-            obj=mentor,
-            actor=request.user,
-            after={"verification_status": mentor.verification_status},
-            severity=AuditSeverity.NOTICE,
-        )
-        return Response({"verification_status": mentor.verification_status})

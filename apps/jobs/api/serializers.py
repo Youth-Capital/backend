@@ -117,6 +117,17 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "coverage": match.coverage_score,
             "knowledge": match.knowledge_score,
             "missing_skills": [s["skill"] for s in match.missing_skills[:4]],
+            # Why this is in front of them at all, which is a different
+            # question from how well they fit it. A card showing 88% and
+            # nothing else cannot tell somebody whether it is 88% of a job
+            # they want.
+            "relevance": match.relevance_score,
+            "relevance_known": match.relevance_known,
+            "relevance_reason": (
+                match.relevance_reasons[0]["code"]
+                if match.relevance_reasons
+                else ""
+            ),
         }
 
     def get_my_application(self, vacancy) -> dict | None:
@@ -335,9 +346,25 @@ class EmployerApplicationSerializer(ApplicationSerializer):
     consent rules as talent search."""
 
     candidate = serializers.SerializerMethodField()
+    cv_rating = serializers.SerializerMethodField()
 
     class Meta(ApplicationSerializer.Meta):
-        fields = [*ApplicationSerializer.Meta.fields, "candidate"]
+        fields = [*ApplicationSerializer.Meta.fields, "candidate", "cv_rating"]
+
+    def get_cv_rating(self, application) -> int | None:
+        """The stored rating of the CV that was actually sent.
+
+        Falls back to the candidate's primary CV when the application carried
+        none, which is what the employer is looking at in that case anyway.
+        The stored column is used rather than a recompute, because this
+        serialiser renders a whole list.
+        """
+        cache = self.context.get("cv_rating_by_user")
+        if application.cv_id and application.cv is not None:
+            return application.cv.quality_score
+        if cache is not None:
+            return cache.get(application.student_id)
+        return None
 
     def get_candidate(self, application) -> dict:
         profile = getattr(application.student, "student_profile", None)

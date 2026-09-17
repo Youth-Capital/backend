@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from apps.common.exceptions import DomainError
 
 from ..models import CVDocument, PortfolioItem, PublicProfile
+from ..rating import refresh_cv_rating
 from ..services import build_cv_payload
 
 
@@ -30,9 +31,16 @@ class CVDocumentSerializer(serializers.ModelSerializer):
             "enabled_sections",
             "target_profession",
             "is_primary",
+            "quality_score",
+            "quality_computed_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "updated_at"]
+        read_only_fields = [
+            "id",
+            "quality_score",
+            "quality_computed_at",
+            "updated_at",
+        ]
 
 
 class PortfolioItemSerializer(serializers.ModelSerializer):
@@ -78,6 +86,7 @@ class CVViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         is_first = not CVDocument.objects.filter(user=self.request.user).exists()
         cv = serializer.save(user=self.request.user, is_primary=is_first)
+        refresh_cv_rating(cv)
 
         from apps.analytics.services import track
 
@@ -90,7 +99,9 @@ class CVViewSet(viewsets.ModelViewSet):
             CVDocument.objects.filter(user=self.request.user, is_primary=True).exclude(
                 pk=serializer.instance.pk
             ).update(is_primary=False)
-        serializer.save()
+        # The rating is a function of the document plus the profile behind it,
+        # so it is recomputed on every edit rather than left to drift.
+        refresh_cv_rating(serializer.save())
 
     @extend_schema(responses={200: dict})
     @action(detail=True, methods=["get"])
@@ -101,6 +112,17 @@ class CVViewSet(viewsets.ModelViewSet):
         fresh, so a CV can never drift out of date.
         """
         return Response(build_cv_payload(self.get_object()))
+
+    @extend_schema(responses={200: dict})
+    @action(detail=True, methods=["get"])
+    def rating(self, request, pk=None):
+        """CV quality rating — the same number the employer sees.
+
+        Recomputed on read rather than served from the column: the score
+        depends on skills and experience that change outside this document, and
+        a student who just passed a test should see the effect immediately.
+        """
+        return Response(refresh_cv_rating(self.get_object()))
 
     @extend_schema(responses={200: dict})
     @action(detail=True, methods=["get"])

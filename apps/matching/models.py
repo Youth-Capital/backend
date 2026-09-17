@@ -106,6 +106,22 @@ class MatchResult(BaseModel):
     education_score = models.PositiveSmallIntegerField(default=0)
     location_score = models.PositiveSmallIntegerField(default=0)
 
+    #: How close this vacancy is to what the learner said they want.
+    #:
+    #: Its own column rather than a seventh weighted component. The six above
+    #: answer "can they do this job"; this answers "do they want it", and
+    #: averaging the two would make a job somebody is perfect for but does not
+    #: want indistinguishable from one they want but cannot do. Kept apart, a
+    #: feed can filter on one and sort on the other — and `overall_score` still
+    #: means exactly what it meant before this column existed, which matters
+    #: because employers have calibrated on it.
+    relevance_score = models.PositiveSmallIntegerField(default=0)
+    #: False when the learner has declared no interests and no target
+    #: profession. Nothing may be filtered out on their behalf in that case:
+    #: an empty feed is a worse product than a noisy one.
+    relevance_known = models.BooleanField(default=False)
+    relevance_reasons = models.JSONField(default=list, blank=True)
+
     matched_skills = models.JSONField(default=list, blank=True)
     missing_skills = models.JSONField(default=list, blank=True)
     breakdown = models.JSONField(default=dict, blank=True)
@@ -138,6 +154,8 @@ class MatchResult(BaseModel):
             models.Index(fields=["vacancy", "-overall_score"]),
             # Student view: best vacancies for a person.
             models.Index(fields=["student", "-overall_score"]),
+            # Student feed: the relevant ones, best first.
+            models.Index(fields=["student", "-relevance_score", "-overall_score"]),
         ]
 
     def __str__(self) -> str:

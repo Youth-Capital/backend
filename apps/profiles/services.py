@@ -26,7 +26,7 @@ from .models import (
 
 #: Evidence from these sources marks a skill as VERIFIED rather than DECLARED.
 VERIFYING_SOURCES = frozenset(
-    {EvidenceSource.TEST, EvidenceSource.EMPLOYER, EvidenceSource.MENTOR}
+    {EvidenceSource.TEST, EvidenceSource.EMPLOYER}
 )
 
 #: Older proof still counts, but less. Half-life in days.
@@ -78,7 +78,7 @@ def record_skill_evidence(
     """Append evidence for a skill and refresh the aggregate.
 
     Every module that can say something about a skill — a finished course, a
-    graded test, a mentor's assessment, an added job — funnels through here, so
+    graded test, a finished course, an added job — funnels through here, so
     there is exactly one place where proficiency is decided.
     """
     score = max(0, min(100, int(score)))
@@ -338,15 +338,6 @@ def can_view_student_profile(*, viewer, student_user) -> bool:
         ).exists():
             return True
         if has_consent(student_user, ConsentType.TALENT_SEARCH):
-            return True
-
-    if viewer.is_mentor:
-        from apps.mentorship.models import MentorSession
-
-        mentor = getattr(viewer, "mentor_profile", None)
-        if mentor and MentorSession.objects.filter(
-            mentor=mentor, student_id=student_user.id
-        ).exists():
             return True
 
     public = getattr(student_user, "public_profile", None)

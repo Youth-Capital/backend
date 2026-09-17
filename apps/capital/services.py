@@ -5,7 +5,7 @@ Each axis blends two things:
 1. **Skill component** — the confidence-weighted proficiency of skills mapped
    to that axis through ``taxonomy.SkillDimension``.
 2. **Activity component** — behavioural signals the platform can actually
-   observe (finished courses, verified experience, mentor sessions, volunteer
+   observe (finished courses, verified experience, volunteer
    work), capped so nobody reaches 100 by volume alone.
 
 Axes with no observable signal yet (HEALTH has no data source in the MVP) are
@@ -34,7 +34,6 @@ ACTIVITY_SIGNALS: dict[str, list[tuple[str, int, int]]] = {
     ],
     CapitalDimensionSlug.DIGITAL_AI: [("completed_courses", 10, 50)],
     CapitalDimensionSlug.SOCIAL: [
-        ("mentor_sessions", 15, 60),
         ("recommendations", 10, 40),
     ],
     CapitalDimensionSlug.ENTREPRENEURIAL: [
@@ -44,7 +43,6 @@ ACTIVITY_SIGNALS: dict[str, list[tuple[str, int, int]]] = {
     CapitalDimensionSlug.FINANCIAL: [("completed_courses", 12, 60)],
     CapitalDimensionSlug.PERSONAL_ETHICAL: [
         ("completed_tasks", 3, 60),
-        ("mentor_sessions", 8, 40),
     ],
     CapitalDimensionSlug.HEALTH: [],
     CapitalDimensionSlug.CIVIC: [("volunteer_experience", 20, 100)],
@@ -57,7 +55,6 @@ def _collect_activity_counters(user) -> dict[str, int]:
     from apps.experience.models import Experience, ExperienceType
     from apps.idp.models import Task, TaskStatus
     from apps.learning.models import Enrollment, EnrollmentStatus
-    from apps.mentorship.models import MentorSession, SessionStatus
 
     experience = Experience.objects.filter(user=user).aggregate(
         projects=Count("id", filter=Q(type=ExperienceType.PROJECT)),
@@ -84,9 +81,6 @@ def _collect_activity_counters(user) -> dict[str, int]:
         "work_experience_months": work_months,
         "verified_skills": UserSkill.objects.filter(
             user=user, status=SkillStatus.VERIFIED
-        ).count(),
-        "mentor_sessions": MentorSession.objects.filter(
-            student=user, status=SessionStatus.COMPLETED
         ).count(),
         "recommendations": 0,  # reserved for the reputation module
         "projects": experience["projects"] or 0,

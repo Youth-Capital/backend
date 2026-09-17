@@ -36,11 +36,27 @@ class SkillCategory(TranslatableNameMixin, BaseModel):
     icon = models.CharField(max_length=64, blank=True)
     order = models.PositiveSmallIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    #: Behavioural competencies rather than technical ability. Flagged on the
+    #: category, not the skill, because softness is a property of the whole
+    #: branch — and inferring it from a slug ("soft-skills") would break the
+    #: first time somebody renames it. Children inherit it; see
+    #: :func:`soft_skill_ids`.
+    is_soft_skill = models.BooleanField(default=False)
 
     class Meta:
         db_table = "taxonomy_skill_category"
         ordering = ["order", "name_uz"]
         verbose_name_plural = "skill categories"
+
+    @property
+    def is_soft(self) -> bool:
+        node, guard = self, 0
+        while node is not None and guard < 10:
+            if node.is_soft_skill:
+                return True
+            node = node.parent
+            guard += 1
+        return False
 
     @property
     def path(self) -> str:

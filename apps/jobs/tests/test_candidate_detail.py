@@ -206,3 +206,89 @@ def test_opening_an_anonymous_card_is_not_a_pii_access(
     auth(employer).get(detail_url(vacancy, candidate))
 
     assert AuditLog.objects.filter(action=AuditAction.PII_ACCESS).count() == before
+
+
+# -- the CV block ----------------------------------------------------------
+@pytest.fixture
+def candidate_cv(db, candidate):
+    from apps.cv.models import CVDocument
+
+    return CVDocument.objects.create(
+        user=candidate,
+        title="CV",
+        headline="Junior data analyst",
+        summary="Аналитик-стажёр, SQL и Power BI.",
+        is_primary=True,
+    )
+
+
+def test_the_card_carries_the_cv_and_its_rating(
+    auth, employer, vacancy, candidate, matched, candidate_cv
+):
+    """The employer asked for the rating *and* the résumé — both are here."""
+    consent_to_talent_search(candidate)
+
+    response = auth(employer).get(detail_url(vacancy, candidate))
+
+    cv = response.data["cv"]
+    assert cv is not None
+    assert 0 < cv["rating"]["overall"] <= 100
+    assert cv["rating"]["band"]
+    assert len(cv["rating"]["components"]) == 6
+    assert cv["document"]["summary"]
+    assert cv["document"]["personal"]["full_name"]
+
+
+def test_an_anonymous_candidates_cv_is_redacted_too(
+    auth, employer, vacancy, candidate, matched, candidate_cv
+):
+    """The résumé is the widest identity surface on the card.
+
+    Sending the rating with an unredacted document attached would undo every
+    other rule on this endpoint in one field.
+    """
+    response = auth(employer).get(detail_url(vacancy, candidate))
+
+    cv = response.data["cv"]
+    document = cv["document"]
+
+    assert response.data["identified"] is False
+    assert document["meta"]["identified"] is False
+    assert document["personal"]["full_name"] == ""
+    assert document["personal"]["city"] == ""
+    assert "contacts" not in document, "an email address is a name"
+    for entry in document.get("experience", []):
+        assert entry["organization"] == ""
+
+    # The rating still comes through: it is a number about a document, not
+    # about a person, and it is the reason the block exists.
+    assert cv["rating"]["overall"] > 0
+    assert document.get("skills"), "capability must survive the redaction"
+
+
+def test_a_candidate_without_a_cv_returns_null_rather_than_failing(
+    auth, employer, vacancy, candidate, matched
+):
+    response = auth(employer).get(detail_url(vacancy, candidate))
+
+    assert response.status_code == 200
+    assert response.data["cv"] is None
+
+
+def test_the_candidate_list_carries_the_stored_cv_rating(
+    auth, employer, vacancy, candidate, matched, candidate_cv
+):
+    """Sorting forty candidates needs the number on the row, not a click."""
+    from apps.cv.rating import refresh_cv_rating
+
+    refresh_cv_rating(candidate_cv)
+
+    response = auth(employer).get(f"{VACANCIES_URL}{vacancy.id}/candidates/")
+
+    row = next(
+        item
+        for item in response.data["results"]
+        if item["user_id"] == str(candidate.id)
+    )
+    assert row["has_cv"] is True
+    assert row["cv_rating"] == candidate_cv.quality_score

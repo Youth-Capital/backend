@@ -88,24 +88,10 @@ class DevelopmentPlanListSerializer(serializers.ModelSerializer):
 
 class DevelopmentPlanDetailSerializer(DevelopmentPlanListSerializer):
     milestones = MilestoneSerializer(many=True, read_only=True)
-    reviews = serializers.SerializerMethodField()
 
     class Meta(DevelopmentPlanListSerializer.Meta):
-        fields = [*DevelopmentPlanListSerializer.Meta.fields, "milestones", "reviews"]
+        fields = [*DevelopmentPlanListSerializer.Meta.fields, "milestones"]
         read_only_fields = fields
-
-    def get_reviews(self, plan) -> list[dict]:
-        return [
-            {
-                "id": str(review.id),
-                "status": review.status,
-                "comment": review.comment,
-                "reviewer": review.reviewer.display_name,
-                "created_at": review.created_at,
-            }
-            for review in plan.reviews.select_related("reviewer").all()
-        ]
-
 
 class GoalSerializer(serializers.ModelSerializer):
     plans = DevelopmentPlanListSerializer(many=True, read_only=True)

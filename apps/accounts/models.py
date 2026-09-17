@@ -115,10 +115,6 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
         return self.role == Role.EMPLOYER
 
     @property
-    def is_mentor(self) -> bool:
-        return self.role == Role.MENTOR
-
-    @property
     def is_admin(self) -> bool:
         return self.role == Role.ADMIN or self.is_superuser
 

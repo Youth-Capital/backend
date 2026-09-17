@@ -364,6 +364,71 @@ class LessonViewSet(viewsets.ModelViewSet):
 
     @extend_schema(request=None, responses={200: dict})
     @action(detail=True, methods=["post"])
+    def ask(self, request, pk=None):
+        """Answer a learner's question about this lesson, from this lesson.
+
+        The reply is built only out of excerpts of the course's own text, and
+        those excerpts come back with it. That is the whole design: a model
+        asked a course question with no course attached answers from its own
+        memory of the subject, fluently and in the platform's voice, and the
+        learner has no way to tell that apart from what they were taught.
+
+        Same gate as the lesson body — enrol, or it is a free preview. The
+        question goes through the safety filter before it reaches a provider,
+        and the call is metered like any other.
+        """
+        from apps.ai.safety import check_text
+
+        from ..tutor import QUESTION_MAX_CHARS, build_answer, can_answer
+
+        lesson = self.get_object()
+        if not can_open_lesson(request.user, lesson):
+            raise NotAllowed(
+                "Enrol in the course to open this lesson.", code="not_enrolled"
+            )
+
+        question = str(request.data.get("question", "")).strip()
+        if not question:
+            raise DomainError("Ask a question first.", code="question_required")
+        if len(question) > QUESTION_MAX_CHARS:
+            raise DomainError(
+                "That question is too long — ask it in a sentence or two.",
+                code="question_too_long",
+            )
+
+        verdict = check_text(question, user=request.user, request=request)
+        if not verdict.allowed:
+            return Response(
+                {
+                    "available": False,
+                    "reason": "blocked",
+                    "answer": verdict.message,
+                    "escalate_to": verdict.escalate_to,
+                }
+            )
+
+        allowed, reason = can_answer(lesson)
+        if not allowed:
+            # Nothing written down to answer from. Said plainly rather than
+            # handed to a model that would answer anyway.
+            return Response({"available": False, "reason": reason, "answer": ""})
+
+        from apps.billing.enums import Feature as BillingFeature
+        from apps.billing.services import consume
+
+        consume(request.user, BillingFeature.AI_CHAT)
+
+        language = {
+            "ru": "Russian",
+            "en": "English",
+            "uz": "Uzbek (latin script)",
+        }.get(get_language() or "uz", "Uzbek (latin script)")
+
+        return Response(build_answer(lesson, question, language=language))
+
+
+    @extend_schema(request=None, responses={200: dict})
+    @action(detail=True, methods=["post"])
     def check(self, request, pk=None):
         """The questions for this lesson — without the answers.
 
@@ -391,19 +456,21 @@ class LessonViewSet(viewsets.ModelViewSet):
         if not allowed:
             return Response({"available": False, "reason": reason, "questions": []})
 
+        from ..models import LessonQuiz
+        from ..quizgen import build_for
+
         fingerprint = source_fingerprint(recap_source(lesson))
-        if lesson.check_questions and lesson.check_source_hash == fingerprint:
+
+        # 1. This learner's own quiz, if it still matches the lesson.
+        mine = LessonQuiz.objects.filter(lesson=lesson, user=request.user).first()
+        if mine and mine.source_hash == fingerprint and mine.questions:
             return Response(
                 {
                     "available": True,
-                    "questions": _questions_without_answers(lesson.check_questions),
+                    "personal": True,
+                    "questions": _questions_without_answers(mine.questions),
                 }
             )
-
-        from apps.billing.enums import Feature as BillingFeature
-        from apps.billing.services import consume
-
-        consume(request.user, BillingFeature.AI_CHAT)
 
         language = {
             "ru": "Russian",
@@ -411,10 +478,65 @@ class LessonViewSet(viewsets.ModelViewSet):
             "uz": "Uzbek (latin script)",
         }.get(get_language() or "uz", "Uzbek (latin script)")
 
+        from apps.billing.enums import Feature as BillingFeature
+        from apps.billing.services import consume
+
+        # 2. Write them one.
+        #
+        # Charged before the call, not after: the quota exists to bound spend,
+        # and a check that runs after the model has already been paid for
+        # bounds nothing.
+        consume(request.user, BillingFeature.AI_CHAT)
+
+        attempt = (mine.attempt + 1) if mine else 0
+        personal = []
+        try:
+            personal = build_for(
+                lesson, request.user, language=language, attempt=attempt
+            )
+        except RuntimeError:
+            # No model configured. Not an error -- the shared set below is the
+            # feature as it was before quizzes were per-learner.
+            personal = []
+        except Exception:
+            logger.exception("Personal quiz failed for lesson %s", lesson.id)
+            personal = []
+
+        if personal:
+            LessonQuiz.objects.update_or_create(
+                lesson=lesson,
+                user=request.user,
+                defaults={
+                    "questions": personal,
+                    "source_hash": fingerprint,
+                    "attempt": attempt,
+                },
+            )
+            return Response(
+                {
+                    "available": True,
+                    "personal": True,
+                    "questions": _questions_without_answers(personal),
+                }
+            )
+
+        # 3. The shared set. Everyone gets the same three, which is what this
+        #    endpoint did before and is still better than no check at all.
+        if lesson.check_questions and lesson.check_source_hash == fingerprint:
+            return Response(
+                {
+                    "available": True,
+                    "personal": False,
+                    "questions": _questions_without_answers(lesson.check_questions),
+                }
+            )
+
         try:
             questions = build_check(lesson, language=language)
         except RuntimeError:
-            return Response({"available": False, "reason": "no_model", "questions": []})
+            return Response(
+                {"available": False, "reason": "no_model", "questions": []}
+            )
         except Exception:
             logger.exception("Check generation failed for lesson %s", lesson.id)
             raise DomainError(
@@ -425,14 +547,20 @@ class LessonViewSet(viewsets.ModelViewSet):
         if not questions:
             # The model produced nothing usable. Better to say so than to show
             # a broken widget the learner cannot answer.
-            return Response({"available": False, "reason": "no_questions", "questions": []})
+            return Response(
+                {"available": False, "reason": "no_questions", "questions": []}
+            )
 
         lesson.check_questions = questions
         lesson.check_source_hash = fingerprint
         lesson.save(update_fields=["check_questions", "check_source_hash", "updated_at"])
 
         return Response(
-            {"available": True, "questions": _questions_without_answers(questions)}
+            {
+                "available": True,
+                "personal": False,
+                "questions": _questions_without_answers(questions),
+            }
         )
 
     @extend_schema(request=dict, responses={200: dict})
@@ -455,12 +583,27 @@ class LessonViewSet(viewsets.ModelViewSet):
                 "Enrol in the course to open this lesson.", code="not_enrolled"
             )
 
-        if not lesson.check_questions:
+        from ..models import LessonQuiz
+
+        fingerprint = source_fingerprint(recap_source(lesson))
+
+        # Graded against the set this learner was actually shown.
+        #
+        # Their own quiz first: grading a personal quiz against the shared key
+        # would mark a correct answer wrong, and the option order alone
+        # guarantees it -- index 2 in their questions is not index 2 in
+        # anybody else's.
+        mine = LessonQuiz.objects.filter(lesson=lesson, user=request.user).first()
+        if mine and mine.questions:
+            key, key_hash = mine.questions, mine.source_hash
+        elif lesson.check_questions:
+            key, key_hash = lesson.check_questions, lesson.check_source_hash
+        else:
             raise DomainError("This lesson has no questions.", code="no_questions")
 
         # The lesson may have been edited between asking and answering, which
         # would grade the learner against questions they never saw.
-        if lesson.check_source_hash != source_fingerprint(recap_source(lesson)):
+        if key_hash != fingerprint:
             return Response(
                 {"stale": True, "score": None, "results": []},
                 status=status.HTTP_409_CONFLICT,
@@ -470,7 +613,7 @@ class LessonViewSet(viewsets.ModelViewSet):
         if not isinstance(answers, dict):
             raise DomainError("Send the answers.", code="validation_error")
 
-        score, results = grade(lesson.check_questions, answers)
+        score, results = grade(key, answers)
 
         # Recorded only for someone actually enrolled: an author previewing
         # their own lesson is not a learner, and their attempt would show up in

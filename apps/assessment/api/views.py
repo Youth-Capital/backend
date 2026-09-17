@@ -237,6 +237,13 @@ class AttemptViewSet(viewsets.ReadOnlyModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         attempt = submit_attempt(self.get_object(), serializer.validated_data["answers"])
+
+        # Re-read before serialising. `get_object()` prefetched `skill_results`
+        # while the attempt was still ungraded — an empty list — and grading
+        # then created the rows behind that cache. Serialising the cached
+        # object returned a result screen with no per-skill breakdown at all,
+        # which is the one thing the screen exists to show.
+        attempt = self.get_queryset().get(pk=attempt.pk)
         payload = AttemptSerializer(attempt).data
 
         # Correct answers are revealed only after submission, and only if the

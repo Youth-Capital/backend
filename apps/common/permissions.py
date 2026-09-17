@@ -27,11 +27,6 @@ class IsEmployer(_RolePermission):
     message = "Only employers can perform this action."
 
 
-class IsMentor(_RolePermission):
-    role = Role.MENTOR
-    message = "Only mentors can perform this action."
-
-
 class IsAdmin(BasePermission):
     message = "Administrator access required."
 

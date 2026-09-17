@@ -32,6 +32,11 @@ REGIONS = [
     ("NAM", "Namangan viloyati", "Наманганская область", "Namangan region"),
 ]
 
+#: Categories whose whole branch holds behavioural competencies rather than
+#: technical ability. Read by apps/taxonomy/services.soft_skill_ids(), which is
+#: what separates the two halves of the capability report.
+SOFT_SKILL_CATEGORIES = {"soft-skills"}
+
 # slug, (uz, ru, en), parent slug
 CATEGORIES = [
     ("technology", ("Texnologiya", "Технологии", "Technology"), None),
@@ -134,6 +139,11 @@ SKILLS = [
      "soft-skills", [], [("KNOWLEDGE", 0.8), ("ENTREPRENEURIAL", 0.6)]),
     ("presentation", ("Prezentatsiya", "Презентация", "Presentation"), "soft-skills", [],
      [("SOCIAL", 0.8)]),
+    ("adaptability", ("Moslashuvchanlik", "Адаптивность", "Adaptability"),
+     "soft-skills", ["flexibility"], [("PERSONAL_ETHICAL", 0.9), ("HEALTH", 0.4)]),
+    ("emotional-intelligence", ("Emotsional intellekt", "Эмоциональный интеллект",
+     "Emotional intelligence"), "soft-skills", ["eq"],
+     [("SOCIAL", 1.0), ("PERSONAL_ETHICAL", 0.8)]),
     ("english", ("Ingliz tili", "Английский язык", "English"), "languages", ["eng"],
      [("KNOWLEDGE", 0.9), ("PROFESSIONAL", 0.6)]),
     ("russian", ("Rus tili", "Русский язык", "Russian"), "languages", ["rus"],
@@ -277,7 +287,13 @@ class Command(BaseCommand):
         for slug, (uz, ru, en), parent in CATEGORIES:
             category, _ = SkillCategory.objects.update_or_create(
                 slug=slug,
-                defaults={"name_uz": uz, "name_ru": ru, "name_en": en, "is_active": True},
+                defaults={
+                    "name_uz": uz,
+                    "name_ru": ru,
+                    "name_en": en,
+                    "is_active": True,
+                    "is_soft_skill": slug in SOFT_SKILL_CATEGORIES,
+                },
             )
             created[slug] = category
         for order, (slug, _names, parent) in enumerate(CATEGORIES):

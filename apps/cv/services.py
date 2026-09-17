@@ -17,7 +17,16 @@ from apps.profiles.models import Education, UserSkill
 from .models import CVDocument, PortfolioItem, PublicProfile
 
 
-def build_cv_payload(cv: CVDocument) -> dict:
+def build_cv_payload(cv: CVDocument, *, identified: bool = True) -> dict:
+    """Assemble the CV.
+
+    ``identified=False`` is the employer-side view of a candidate the talent
+    search has not yet earned a name for. It removes what points at the person
+    — name, photo, city, contacts, employer names — and keeps what points at
+    their capability, which is the part talent search is allowed to see. The
+    same rule the candidate card uses, applied to the same data, so the two
+    cannot disagree.
+    """
     user = cv.user
     profile = getattr(user, "student_profile", None)
     sections = cv.enabled_sections
@@ -29,18 +38,23 @@ def build_cv_payload(cv: CVDocument) -> dict:
             "template": cv.template,
             "language": cv.language,
             "sections": sections,
+            "identified": identified,
         },
         "personal": {
-            "full_name": profile.full_name if profile else "",
+            "full_name": profile.full_name if (identified and profile) else "",
             "headline": cv.headline,
             "youth_id": profile.youth_id if profile else None,
-            "city": profile.city if profile else "",
+            "city": profile.city if (identified and profile) else "",
             "region": profile.region.name if profile and profile.region else None,
-            "avatar": profile.avatar.url if profile and profile.avatar else None,
+            "avatar": (
+                profile.avatar.url
+                if identified and profile and profile.avatar
+                else None
+            ),
         },
     }
 
-    if "contacts" in sections:
+    if "contacts" in sections and identified:
         payload["contacts"] = {"email": user.email, "phone": user.phone}
 
     if "summary" in sections:
@@ -49,7 +63,9 @@ def build_cv_payload(cv: CVDocument) -> dict:
     if "education" in sections:
         payload["education"] = [
             {
-                "institution": e.institution,
+                # The institution names the person in a country this size —
+                # "the only cybersecurity student at that lyceum" is a name.
+                "institution": e.institution if identified else "",
                 "degree": e.degree,
                 "field_of_study": e.field_of_study,
                 "start_date": e.start_date,
@@ -88,7 +104,7 @@ def build_cv_payload(cv: CVDocument) -> dict:
             {
                 "type": e.type,
                 "title": e.title,
-                "organization": e.organization,
+                "organization": e.organization if identified else "",
                 "description": e.description,
                 "start_date": e.start_date,
                 "end_date": e.end_date,
@@ -134,9 +150,11 @@ def build_cv_payload(cv: CVDocument) -> dict:
         payload["certificates"] = [
             {
                 "title": c.course.title,
-                "serial": c.serial,
+                # The serial resolves to a public page carrying the holder's
+                # name, so it belongs to the identity, not the achievement.
+                "serial": c.serial if identified else "",
                 "issued_at": c.issued_at,
-                "verification_code": c.verification_code,
+                "verification_code": c.verification_code if identified else "",
             }
             for c in Certificate.objects.filter(user=user).select_related("course")
         ]

@@ -76,12 +76,12 @@ LOCAL_APPS = [
     "apps.experience",
     "apps.cv",
     "apps.jobs",
-    "apps.mentorship",
     "apps.matching",
     "apps.ai",
     "apps.notifications",
     "apps.analytics",
     "apps.billing",
+    "apps.feedback",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -309,6 +309,17 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 ALLOWED_UPLOAD_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"]
 ALLOWED_UPLOAD_DOC_TYPES = ["application/pdf"]
 MAX_UPLOAD_SIZE_MB = 5
+
+# Books get their own two settings, because they are not worksheets.
+#
+# EPUB is here because half of what an author will have on disk is an EPUB,
+# and refusing it would send them off to convert a file before they could
+# attach it. The size cap is separate for the blunt reason that 5 MB is not a
+# book: a scanned textbook clears that before its table of contents. 40 MB
+# covers a typical text-and-diagrams PDF without turning the endpoint into
+# somewhere to park a video.
+ALLOWED_UPLOAD_BOOK_TYPES = ["application/pdf", "application/epub+zip"]
+MAX_BOOK_SIZE_MB = 40
 
 # The ceiling on decoded image size, in megapixels.
 #

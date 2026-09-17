@@ -118,7 +118,6 @@ class RecommendationType(models.TextChoices):
     COURSE = "COURSE", _("Course")
     VACANCY = "VACANCY", _("Vacancy")
     SKILL = "SKILL", _("Skill")
-    MENTOR = "MENTOR", _("Mentor")
     TASK = "TASK", _("Task")
     PROFESSION = "PROFESSION", _("Profession")
     TEST = "TEST", _("Test")
@@ -412,3 +411,76 @@ class ChatMessage(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.author}:{self.code or self.text[:40]}"
+
+
+class AnswerDetail(models.TextChoices):
+    BRIEF = "BRIEF", _("Short")
+    NORMAL = "NORMAL", _("Normal")
+    DETAILED = "DETAILED", _("Detailed")
+
+
+class AnswerTone(models.TextChoices):
+    WARM = "WARM", _("Encouraging")
+    NEUTRAL = "NEUTRAL", _("Neutral")
+    DIRECT = "DIRECT", _("Direct")
+
+
+class AssistantProfile(BaseModel):
+    """How one person wants the assistant to talk to them.
+
+    Every field is nullable, and that is the design rather than laziness. The
+    assistant already adapts on its own -- see apps/ai/persona.py, which reads
+    the account's actual stage and picks a register from it -- so a row here is
+    a *correction*, not a configuration. Null means "whatever you worked out",
+    and someone who never opens the setting gets an answer pitched at where
+    they are rather than at a default somebody picked once for everybody.
+
+    That distinction matters for the shape of the thing: a NOT NULL column with
+    a default would silently freeze a new learner's preferences at the moment
+    they signed up, and they would still be getting beginner explanations a
+    year later.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="assistant_profile",
+    )
+
+    #: Null: follow the stage. Set: this person asked for this length.
+    detail = models.CharField(
+        max_length=8, choices=AnswerDetail.choices, blank=True, default=""
+    )
+    tone = models.CharField(
+        max_length=8, choices=AnswerTone.choices, blank=True, default=""
+    )
+    #: Null (None) rather than False: "I did not choose" is not "no".
+    explain_terms = models.BooleanField(null=True, blank=True)
+
+    class Meta:
+        db_table = "ai_assistant_profile"
+
+    def __str__(self) -> str:
+        return f"assistant preferences for {self.user_id}"
+
+    def overrides(self) -> dict:
+        """Only the fields this person actually chose.
+
+        Merged over the derived defaults by persona.build_system_prompt, so an
+        unset field is absent from the dict rather than present-and-empty --
+        an empty string would override the derived value with nothing.
+        """
+        chosen = {}
+        if self.detail:
+            chosen["detail"] = self.detail
+        if self.tone:
+            chosen["tone"] = self.tone
+        if self.explain_terms is not None:
+            chosen["explain_terms"] = self.explain_terms
+        return chosen
+
+
+def preferences_for(user) -> dict:
+    """This person's chosen overrides, or {} when they have none."""
+    profile = AssistantProfile.objects.filter(user=user).first()
+    return profile.overrides() if profile else {}

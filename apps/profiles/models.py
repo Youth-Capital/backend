@@ -53,6 +53,11 @@ class StudentProfile(BaseModel):
 
     first_name = models.CharField(max_length=100, blank=True)
     last_name = models.CharField(max_length=100, blank=True)
+    #: Отчество. Optional and never required: not every learner has one, and
+    #: an official form that demands a field somebody cannot fill in is a
+    #: form they abandon. Kept separate rather than folded into first_name so
+    #: documents can set it in the order an Uzbek or Russian record expects.
+    middle_name = models.CharField(max_length=100, blank=True)
     birth_date = models.DateField(null=True, blank=True)
     gender = models.CharField(
         max_length=12, choices=Gender.choices, default=Gender.UNDISCLOSED
@@ -230,57 +235,6 @@ class EmployerMember(BaseModel):
                 fields=["company", "user"], name="uniq_employer_member"
             )
         ]
-
-
-class MentorProfile(BaseModel):
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="mentor_profile",
-    )
-    first_name = models.CharField(max_length=100, blank=True)
-    last_name = models.CharField(max_length=100, blank=True)
-    headline = models.CharField(max_length=200, blank=True)
-    bio = models.TextField(blank=True, max_length=4000)
-    avatar = models.ImageField(
-        upload_to="avatars/mentors/",
-        blank=True,
-        null=True,
-        validators=[validate_image_upload],
-    )
-
-    expertise = models.ManyToManyField(Skill, blank=True, related_name="mentors")
-    professions = models.ManyToManyField(Profession, blank=True, related_name="mentors")
-
-    years_experience = models.PositiveSmallIntegerField(default=0)
-    is_free = models.BooleanField(default=True)
-    hourly_rate = models.PositiveIntegerField(null=True, blank=True)
-    currency = models.CharField(max_length=3, default="UZS")
-    languages = models.JSONField(default=list, blank=True)
-    #: {"mon": [["09:00","12:00"]], ...}
-    availability = models.JSONField(default=dict, blank=True)
-
-    rating_avg = models.DecimalField(max_digits=3, decimal_places=2, default=0)
-    rating_count = models.PositiveIntegerField(default=0)
-    sessions_count = models.PositiveIntegerField(default=0)
-    accepting_students = models.BooleanField(default=True)
-
-    verification_status = models.CharField(
-        max_length=12,
-        choices=VerificationStatus.choices,
-        default=VerificationStatus.PENDING,
-    )
-
-    class Meta:
-        db_table = "profiles_mentor"
-        indexes = [models.Index(fields=["verification_status", "accepting_students"])]
-
-    def __str__(self) -> str:
-        return f"{self.first_name} {self.last_name}".strip() or str(self.user_id)
-
-    @property
-    def full_name(self) -> str:
-        return f"{self.first_name} {self.last_name}".strip()
 
 
 class SkillStatus(models.TextChoices):

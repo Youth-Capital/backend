@@ -40,6 +40,12 @@ class MatchResultSerializer(serializers.ModelSerializer):
             "experience_score",
             "education_score",
             "location_score",
+            # Beside the score, never inside it. The client shows the two
+            # separately because they answer different questions: can you do
+            # this job, and is it the kind of job you said you want.
+            "relevance_score",
+            "relevance_known",
+            "relevance_reasons",
             "matched_skills",
             "missing_skills",
             "explanation",
@@ -92,22 +98,56 @@ class MyMatchesView(APIView):
     permission_classes = [IsAuthenticated, IsStudent]
 
     def get(self, request):
+        """Vacancies this person could do, filtered to the ones they want.
+
+        The relevance filter is applied here as well as in the pool, and that
+        is not redundant. The pool decides what gets *computed* from now on;
+        this decides what gets *shown*, which matters for every result already
+        in the table from before there was such a thing as relevance. Without
+        it the feed would stay noisy until a full recompute had worked its way
+        through, and a stored row for a job somebody has since decided against
+        would keep resurfacing.
+
+        `relevance_known=False` rows are kept deliberately: that flag means the
+        learner has declared nothing, and filtering them out would empty the
+        page for exactly the people with the least to go on.
+
+        `?all=1` turns the filter off — for the learner who wants to see
+        everything they qualify for, which is a reasonable thing to want and
+        should not require guessing a query parameter's absence.
+        """
+        from django.db.models import Q
+
+        from ..relevance import RELEVANT_ENOUGH
+
         limit = min(int(request.query_params.get("limit", 20)), 100)
         min_score = int(request.query_params.get("min_score", 0))
+        unfiltered = request.query_params.get("all") in {"1", "true", "yes"}
 
-        matches = MatchResult.objects.filter(
-            student=request.user, overall_score__gte=min_score
-        ).select_related("vacancy", "vacancy__employer")
-
-        if not matches.exists():
-            recompute_matches_for_student(request.user, limit=50)
-            matches = MatchResult.objects.filter(
+        def feed():
+            rows = MatchResult.objects.filter(
                 student=request.user, overall_score__gte=min_score
             ).select_related("vacancy", "vacancy__employer")
+            if not unfiltered:
+                rows = rows.filter(
+                    Q(relevance_known=False)
+                    | Q(relevance_score__gte=RELEVANT_ENOUGH)
+                )
+            return rows
+
+        matches = feed()
+        if not matches.exists():
+            recompute_matches_for_student(request.user, limit=50)
+            matches = feed()
 
         return Response(
             MatchResultSerializer(
-                matches.order_by("-overall_score")[:limit], many=True
+                # Relevance first, then fit. A job in the direction somebody
+                # named beats a slightly better-scoring one outside it —
+                # ordering by score alone would put the filter's survivors in
+                # an order that ignores the reason they survived.
+                matches.order_by("-relevance_score", "-overall_score")[:limit],
+                many=True,
             ).data
         )
 

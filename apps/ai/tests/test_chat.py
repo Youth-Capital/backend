@@ -293,18 +293,6 @@ def test_history_is_scoped_to_the_caller(student, django_user_model):
     assert response.json()["messages"] == []
 
 
-def test_mentors_are_not_offered_the_assistant(django_user_model):
-    mentor = django_user_model.objects.create_user(
-        email="m@example.com", password="Str0ng!passw0rd", role=Role.MENTOR
-    )
-
-    response = _client(mentor).post(
-        "/api/v1/ai/chat/", {"text": "помощь"}, format="json"
-    )
-
-    assert response.status_code == 403
-
-
 def test_every_conversation_can_be_cleared_at_once(student):
     from apps.ai.models import ChatThread
 

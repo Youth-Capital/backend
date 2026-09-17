@@ -26,6 +26,7 @@ from apps.assessment.models import (
 )
 from apps.common.enums import EvidenceSource, ModerationStatus, Role
 from apps.common.recompute import recompute_for_user
+from apps.cv.models import CVDocument, PortfolioItem
 from apps.experience.models import Experience, ExperienceSkill, ExperienceType
 from apps.jobs.models import (
     EducationRequirement,
@@ -46,7 +47,6 @@ from apps.profiles.models import (
     EducationStatus,
     EmployerProfile,
     EmploymentStatus,
-    MentorProfile,
     StudentProfile,
 )
 from apps.taxonomy.models import Profession, Region, Skill
@@ -60,25 +60,6 @@ EMPLOYERS = [
      "Digital payments and lending platform serving 400k customers."),
     ("cyber@demo.uz", "SafeNet Security", "Cybersecurity", "SAM",
      "Security operations centre and audit services for enterprise clients."),
-]
-
-# Bios are written per mentor rather than generated from a template: the
-# previous f-string produced "8 years of hands-on experience. Mentoring
-# юниоров." — English and Russian in one sentence, on a platform whose default
-# language is Uzbek.
-MENTORS = [
-    ("mentor.aziz@demo.uz", "Aziz", "Rahimov", "Senior Backend Engineer @ Nexora",
-     8, ["python", "django", "sql", "rest-api"], ["software-developer"],
-     "Backend va API arxitekturasi bo'yicha ishlayman. Boshlovchi dasturchilarga "
-     "birinchi ishga kirishda yordam beraman."),
-    ("mentor.nilufar@demo.uz", "Nilufar", "Karimova", "Lead Data Analyst @ PayNur",
-     6, ["sql", "power-bi", "statistics", "data-analysis"], ["data-analyst"],
-     "Fintechda ma'lumotlar tahlili. SQL, hisobotlar va real biznes masalalarini "
-     "birga yechamiz."),
-    ("mentor.jasur@demo.uz", "Jasur", "To'raev", "SOC Lead @ SafeNet",
-     10, ["linux", "networking", "web-security", "siem"], ["cybersecurity-specialist"],
-     "Kiberxavfsizlik markazida ishlayman. Tarmoq, Linux va insidentlarga javob "
-     "berish bo'yicha yo'l ko'rsataman."),
 ]
 
 # title, provider index (None = platform), level, minutes, [(skill, target)], modules
@@ -168,7 +149,7 @@ STUDENTS = [
     ], [("FREELANCE", "Landing pages", "Self-employed", 10, ["javascript", "html-css"])]),
     ("feruza@demo.uz", "Feruza", "Qodirova", "FAR", EducationStatus.SCHOOL, "ux-ui-designer", [
         ("figma", 66, EvidenceSource.COURSE), ("ui-design", 58, EvidenceSource.SELF),
-        ("communication", 70, EvidenceSource.MENTOR),
+        ("communication", 70, EvidenceSource.COURSE),
     ], [("COMPETITION", "Regional design contest", "Yoshlar Ittifoqi", 1, ["ui-design"])]),
     ("gulnora@demo.uz", "Gulnora", "Tashkentova", "AND", EducationStatus.GRADUATE, "accountant", [
         ("accounting", 74, EvidenceSource.TEST), ("excel", 69, EvidenceSource.TEST),
@@ -179,7 +160,7 @@ STUDENTS = [
     ], []),
     ("iroda@demo.uz", "Iroda", "Bekmurodova", "BUX", EducationStatus.COLLEGE, "digital-marketer", [
         ("smm", 68, EvidenceSource.COURSE), ("content-marketing", 61, EvidenceSource.COURSE),
-        ("communication", 75, EvidenceSource.MENTOR), ("seo", 40, EvidenceSource.SELF),
+        ("communication", 75, EvidenceSource.COURSE), ("seo", 40, EvidenceSource.SELF),
     ], [("VOLUNTEER", "Social media for NGO", "Ekoloji", 12, ["smm"])]),
     ("jahongir@demo.uz", "Jahongir", "Alimov", "NAM", EducationStatus.SCHOOL, "software-developer", [
         ("python", 47, EvidenceSource.COURSE), ("problem-solving", 55, EvidenceSource.SELF),
@@ -191,11 +172,11 @@ STUDENTS = [
     ("laziz@demo.uz", "Laziz", "Xolmatov", "SAM", EducationStatus.GRADUATE, "cybersecurity-specialist", [
         ("linux", 82, EvidenceSource.TEST), ("networking", 79, EvidenceSource.TEST),
         ("siem", 68, EvidenceSource.EMPLOYER), ("web-security", 74, EvidenceSource.TEST),
-        ("incident-response", 60, EvidenceSource.MENTOR), ("english", 62, EvidenceSource.SELF),
+        ("incident-response", 60, EvidenceSource.COURSE), ("english", 62, EvidenceSource.SELF),
     ], [("WORK", "SOC Analyst L1", "SafeNet Security", 22, ["linux", "siem", "networking"])]),
     ("madina@demo.uz", "Madina", "Rustamova", "FAR", EducationStatus.UNIVERSITY, "entrepreneur", [
         ("entrepreneurship", 64, EvidenceSource.COURSE), ("sales", 58, EvidenceSource.SELF),
-        ("financial-literacy", 66, EvidenceSource.COURSE), ("business-model", 55, EvidenceSource.MENTOR),
+        ("financial-literacy", 66, EvidenceSource.COURSE), ("business-model", 55, EvidenceSource.COURSE),
     ], [("PROJECT", "Handmade marketplace", "Self-employed", 9, ["sales", "entrepreneurship"])]),
     ("nodir@demo.uz", "Nodir", "Sultonov", "TAS", EducationStatus.NONE, "software-developer", [
         ("python", 62, EvidenceSource.TEST), ("git", 49, EvidenceSource.SELF),
@@ -212,7 +193,7 @@ STUDENTS = [
 
 
 class Command(BaseCommand):
-    help = "Create demo employers, mentors, students, courses, tests and vacancies."
+    help = "Create demo employers, students, courses, tests and vacancies."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -238,7 +219,6 @@ class Command(BaseCommand):
         self.regions = {r.code: r for r in Region.objects.all()}
 
         employers = self._create_employers()
-        self._create_mentors()
         courses = self._create_courses(employers)
         self._create_tests(courses, employers)
         self._create_vacancies(employers)
@@ -248,7 +228,7 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 "\nDemo data ready.\n"
-                f"  Employers: {len(employers)}   Mentors: {len(MENTORS)}   "
+                f"  Employers: {len(employers)}   "
                 f"Students: {len(STUDENTS)}\n"
                 f"  Courses: {len(courses)}   Vacancies: {Vacancy.objects.count()}\n"
                 f"  Password for every demo account: {DEMO_PASSWORD}\n"
@@ -298,37 +278,6 @@ class Command(BaseCommand):
             )
             profiles.append(profile)
         return profiles
-
-    def _create_mentors(self):
-        for (
-            email,
-            first,
-            last,
-            headline,
-            years,
-            skill_slugs,
-            profession_slugs,
-            bio,
-        ) in MENTORS:
-            user = self._user(email, Role.MENTOR)
-            mentor, _ = MentorProfile.objects.update_or_create(
-                user=user,
-                defaults={
-                    "first_name": first,
-                    "last_name": last,
-                    "headline": headline,
-                    "bio": bio,
-                    "years_experience": years,
-                    "is_free": True,
-                    "verification_status": "VERIFIED",
-                    "accepting_students": True,
-                    "languages": [{"code": "uz"}, {"code": "ru"}],
-                },
-            )
-            mentor.expertise.set([self.skills[s] for s in skill_slugs if s in self.skills])
-            mentor.professions.set(
-                [self.professions[p] for p in profession_slugs if p in self.professions]
-            )
 
     def _create_courses(self, employers) -> list[Course]:
         created = []
@@ -455,10 +404,10 @@ class Command(BaseCommand):
                 defaults={
                     "description": (
                         f"{employer.display_name} is hiring a {title}. You will work "
-                        f"with a mentor, on real tasks, from week one."
+                        f"on real tasks, from week one."
                     ),
                     "responsibilities": "Deliver assigned tasks, review, learn, ship.",
-                    "conditions": "Official employment, mentoring, learning budget.",
+                    "conditions": "Official employment, learning budget.",
                     "employment_type": employment_type,
                     "work_mode": work_mode,
                     "region": self.regions.get(region_code),
@@ -578,7 +527,55 @@ class Command(BaseCommand):
                         )
 
             recompute_for_user(user, reason="seed")
+            self._create_cv(user, profile, first)
             self.stdout.write(f"  student {email} ready")
+
+    def _create_cv(self, user, profile, first_name: str) -> None:
+        """A primary CV per learner, rated.
+
+        Without one the CV rating has nothing to show, and the employer's
+        candidate card reads as if every demo learner never wrote a résumé.
+        The score is deliberately *not* padded: it is computed from the same
+        skills, evidence and experience the seeder just created, so aziza
+        (tested skills, an internship) and hasan (self-declared only) land far
+        apart — which is the contrast the demo exists to make.
+        """
+        from apps.cv.rating import refresh_cv_rating
+
+        profession = getattr(profile, "target_profession", None)
+        headline = profession.name if profession else "Yoshlar Kapitali"
+
+        cv, _created = CVDocument.objects.update_or_create(
+            user=user,
+            title="Mening rezyumem",
+            defaults={
+                "headline": headline,
+                "summary": (
+                    f"{first_name}. {headline} yo'nalishida rivojlanyapman: "
+                    "kurslarni tugatdim, ko'nikmalarni testlar bilan "
+                    "tasdiqladim va amaliy tajriba to'pladim. Jamoada ishlash "
+                    "va yangi vositalarni tez o'rganish men uchun oson."
+                ),
+                "target_profession": profession,
+                "is_primary": True,
+            },
+        )
+
+        # One portfolio item for the learners who have a project on record, so
+        # the portfolio component is not uniformly zero across the demo.
+        experience = user.experiences.filter(type=ExperienceType.PROJECT).first()
+        if experience is not None:
+            PortfolioItem.objects.update_or_create(
+                user=user,
+                title=experience.title,
+                defaults={
+                    "description": experience.description,
+                    "url": "https://github.com/yoshlar-kapitali",
+                    "is_public": True,
+                },
+            )
+
+        refresh_cv_rating(cv)
 
     def _compute_matches(self):
         """Score every published vacancy against the candidate pool.

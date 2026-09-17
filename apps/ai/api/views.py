@@ -197,6 +197,63 @@ class AIAssistantView(APIView):
 
 
 @extend_schema(tags=["ai"])
+class CapabilityView(APIView):
+    """Hard + soft skill analysis.
+
+    Readable by the student about themselves, and by an employer about a
+    candidate they can already reach — the same reachability rule the candidate
+    card uses, so this endpoint cannot become a profile reader for any user id
+    an employer types. Not metered: it reads data the platform already holds
+    and the employer already paid to search.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "ai"
+
+    def get(self, request):
+        target = self._resolve_subject(request)
+        insight = get_ai_service().analyze_capability(target)
+        return Response(
+            {
+                "user_id": str(target.id),
+                "hard": insight.hard,
+                "soft": insight.soft,
+                "balance": insight.balance,
+                "notes": insight.notes,
+                "next_actions": insight.next_actions,
+            }
+        )
+
+    def _resolve_subject(self, request):
+        user_id = request.query_params.get("user")
+        if not user_id or str(user_id) == str(request.user.id):
+            return request.user
+
+        if request.user.role not in {Role.EMPLOYER, Role.ADMIN}:
+            raise NotAllowed("You can only read your own analysis.")
+
+        from apps.accounts.models import User
+        from apps.matching.models import MatchResult
+
+        subject = User.objects.filter(id=user_id).first()
+        if subject is None:
+            raise DomainError("Unknown user.", code="not_found")
+
+        if request.user.role == Role.EMPLOYER:
+            company = getattr(request.user, "employer_profile", None)
+            reachable = MatchResult.objects.filter(
+                student=subject, vacancy__employer=company
+            ).exists()
+            if not reachable:
+                raise NotAllowed(
+                    "This person is not a candidate for your vacancies.",
+                    code="not_found",
+                )
+        return subject
+
+
+@extend_schema(tags=["ai"])
 class AIProviderConfigViewSet(viewsets.ModelViewSet):
     """Provider configuration (TZ §21 leaves the choice open).
 
@@ -518,7 +575,7 @@ def _phrase_with_model(user, thread, question: str, facts: dict) -> str:
     the answer.
     """
     from ..backends import get_chat_backend
-    from ..models import ChatAuthor, ChatMessage
+    from ..models import ChatAuthor, ChatMessage, preferences_for
     from ..safety import check_text
 
     backend = get_chat_backend()
@@ -535,7 +592,16 @@ def _phrase_with_model(user, thread, question: str, facts: dict) -> str:
     ]
 
     try:
-        text = backend.reply(question=question, facts=facts, history=history)
+        # The person, not just their question. The system prompt is composed
+        # from their role, what their account actually contains, and anything
+        # they set in their own assistant preferences — see apps/ai/persona.py.
+        text = backend.reply(
+            question=question,
+            facts=facts,
+            history=history,
+            user=user,
+            preferences=preferences_for(user),
+        )
     except Exception:
         logger.exception("Chat backend failed; falling back to the rule-based answer.")
         return ""
@@ -699,3 +765,76 @@ class SafetyEventViewSet(viewsets.ReadOnlyModelViewSet):
                 ),
             }
         )
+
+
+class AssistantPreferencesView(APIView):
+    """What this person wants the assistant to sound like.
+
+    GET returns both halves and keeps them apart: `chosen` is what they set,
+    `effective` is what the assistant will actually use. They differ wherever
+    nothing was chosen, because the unset fields are filled from the account's
+    own stage -- and showing only the effective values would make a derived
+    default look like a decision the person made.
+
+    `stage` is returned too. It is the assistant's read of where they are, and
+    it is the reason the defaults are what they are; a settings screen that
+    changes behaviour without saying why is a settings screen people distrust.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: dict})
+    def get(self, request):
+        from ..models import AssistantProfile
+        from ..persona import default_preferences, stage_for
+
+        stage = stage_for(request.user)
+        profile = AssistantProfile.objects.filter(user=request.user).first()
+        chosen = profile.overrides() if profile else {}
+
+        return Response(
+            {
+                "stage": stage,
+                "chosen": {
+                    "detail": (profile.detail if profile else "") or None,
+                    "tone": (profile.tone if profile else "") or None,
+                    "explain_terms": profile.explain_terms if profile else None,
+                },
+                "effective": {**default_preferences(stage), **chosen},
+            }
+        )
+
+    @extend_schema(request=dict, responses={200: dict})
+    def patch(self, request):
+        """Set or clear a preference.
+
+        null clears a field back to "follow the stage" -- deliberately
+        reachable, because somebody who tried "short answers" and did not like
+        it should be able to get back to the adaptive default rather than
+        having to guess which of the three fixed options it was.
+        """
+        from ..models import AnswerDetail, AnswerTone, AssistantProfile
+
+        profile, _ = AssistantProfile.objects.get_or_create(user=request.user)
+
+        if "detail" in request.data:
+            value = request.data["detail"]
+            if value not in (None, "", *AnswerDetail.values):
+                raise DomainError("Unknown detail level.", code="validation_error")
+            profile.detail = value or ""
+
+        if "tone" in request.data:
+            value = request.data["tone"]
+            if value not in (None, "", *AnswerTone.values):
+                raise DomainError("Unknown tone.", code="validation_error")
+            profile.tone = value or ""
+
+        if "explain_terms" in request.data:
+            value = request.data["explain_terms"]
+            if value is not None and not isinstance(value, bool):
+                raise DomainError("explain_terms is true, false or null.",
+                                  code="validation_error")
+            profile.explain_terms = value
+
+        profile.save()
+        return self.get(request)

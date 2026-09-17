@@ -68,6 +68,12 @@ class MatchComputation:
     breakdown: dict = field(default_factory=dict)
     explanation: list[dict] = field(default_factory=list)
 
+    #: Carried alongside, never folded into `overall`. See apps/matching/
+    #: relevance.py for why the two must stay separate numbers.
+    relevance: int = 0
+    relevance_known: bool = False
+    relevance_reasons: list[dict] = field(default_factory=list)
+
 
 class MatchingStrategy:
     """Interface so a future ML ranker can replace the rules without touching
@@ -122,6 +128,14 @@ class RuleBasedMatching(MatchingStrategy):
             "location": loc_detail,
         }
         result.explanation = _build_explanation(assessments, result, exp_detail)
+
+        # Alongside, not inside. `overall` above is untouched by this.
+        from .relevance import for_student
+
+        interest = for_student(student, vacancy)
+        result.relevance = interest.score
+        result.relevance_known = interest.known
+        result.relevance_reasons = interest.reasons
         return result
 
 
@@ -445,6 +459,9 @@ def compute_and_store_match(student, vacancy, *, weight_profile=None) -> MatchRe
             "missing_skills": computation.missing_skills,
             "breakdown": computation.breakdown,
             "explanation": computation.explanation,
+            "relevance_score": computation.relevance,
+            "relevance_known": computation.relevance_known,
+            "relevance_reasons": computation.relevance_reasons,
             "weight_profile": profile,
             "is_stale": False,
         },

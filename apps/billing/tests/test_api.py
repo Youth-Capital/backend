@@ -1,6 +1,6 @@
 """Billing endpoints over HTTP.
 
-The mentor cases are regressions: `ensure_subscription` raises for a role with
+The admin cases are regressions: `ensure_subscription` raises for a role with
 no plan, so an unguarded endpoint returned 500 to a perfectly valid user.
 """
 
@@ -68,32 +68,32 @@ def test_subscription_materialises_the_free_tier(catalogue, django_user_model):
 def test_subscription_is_404_for_a_role_nothing_is_sold_to(
     catalogue, django_user_model
 ):
-    mentor = django_user_model.objects.create_user(
-        email="m@example.com", password="Str0ng!passw0rd", role=Role.MENTOR
+    staff = django_user_model.objects.create_user(
+        email="m@example.com", password="Str0ng!passw0rd", role=Role.ADMIN
     )
 
-    response = _client(mentor).get("/api/v1/billing/subscription/")
+    response = _client(staff).get("/api/v1/billing/subscription/")
 
     assert response.status_code == 404
     assert response.json()["code"] == "not_sold"
 
 
 def test_cancel_is_404_for_a_role_nothing_is_sold_to(catalogue, django_user_model):
-    mentor = django_user_model.objects.create_user(
-        email="m2@example.com", password="Str0ng!passw0rd", role=Role.MENTOR
+    staff = django_user_model.objects.create_user(
+        email="m2@example.com", password="Str0ng!passw0rd", role=Role.ADMIN
     )
 
-    response = _client(mentor).post("/api/v1/billing/cancel/", {"immediately": False})
+    response = _client(staff).post("/api/v1/billing/cancel/", {"immediately": False})
 
     assert response.status_code == 404
 
 
-def test_usage_is_empty_rather_than_broken_for_mentors(catalogue, django_user_model):
-    mentor = django_user_model.objects.create_user(
-        email="m3@example.com", password="Str0ng!passw0rd", role=Role.MENTOR
+def test_usage_is_empty_rather_than_broken_for_admins(catalogue, django_user_model):
+    staff = django_user_model.objects.create_user(
+        email="m3@example.com", password="Str0ng!passw0rd", role=Role.ADMIN
     )
 
-    response = _client(mentor).get("/api/v1/billing/usage/")
+    response = _client(staff).get("/api/v1/billing/usage/")
 
     assert response.status_code == 200
     assert response.json() == []

@@ -45,7 +45,10 @@ class QuestionForTakingSerializer(serializers.ModelSerializer):
 class AnswerOptionAdminSerializer(serializers.ModelSerializer):
     class Meta:
         model = AnswerOption
-        fields = ["id", "text", "is_correct", "order"]
+        # `weight` is authoring data for SITUATIONAL options and stays on this
+        # side of the split: a student who can read the weights can pick the
+        # highest one without answering the question.
+        fields = ["id", "text", "is_correct", "weight", "order"]
 
 
 class QuestionAdminSerializer(serializers.ModelSerializer):
@@ -186,6 +189,7 @@ class TestSkillResultSerializer(serializers.ModelSerializer):
 
 class AttemptSerializer(serializers.ModelSerializer):
     test_title = serializers.CharField(source="test.title", read_only=True)
+    test_type = serializers.CharField(source="test.type", read_only=True)
     skill_results = TestSkillResultSerializer(many=True, read_only=True)
 
     class Meta:
@@ -194,6 +198,7 @@ class AttemptSerializer(serializers.ModelSerializer):
             "id",
             "test",
             "test_title",
+            "test_type",
             "attempt_no",
             "started_at",
             "expires_at",

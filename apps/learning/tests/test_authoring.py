@@ -59,6 +59,21 @@ def pdf(name="reading.pdf"):
     return SimpleUploadedFile(name, b"%PDF-1.7\n%stub\n", content_type="application/pdf")
 
 
+def png(name="diagram.png", size=(8, 8)):
+    """A real PNG, encoded here rather than checked in.
+
+    The image validator decodes the bytes with Pillow, so a stub of the kind
+    pdf() gets away with would be rejected for the right reason and prove
+    nothing at all about the path being tested.
+    """
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", size, (200, 182, 255)).save(buffer, format="PNG")
+    return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
+
+
 # -- modules ---------------------------------------------------------------
 def test_the_author_can_add_a_module(auth, employer, course):
     response = auth(employer).post(
@@ -102,8 +117,8 @@ def test_a_link_can_be_attached_to_a_lesson(auth, employer, course, lesson):
     assert response.status_code == 201, response.data
 
 
-def test_a_book_needs_a_link_not_a_file(auth, employer, course):
-    """A book is a pointer at something the platform does not host."""
+def test_a_book_needs_either_a_file_or_a_link(auth, employer, course):
+    """A title on its own is a book nobody can open."""
     response = auth(employer).post(
         MATERIALS_URL,
         {"course": str(course.id), "kind": "BOOK", "title": "Clean Code"},
@@ -343,3 +358,339 @@ def test_a_locked_lesson_cannot_be_recapped(auth, student, module, db):
     response = auth(student).post(f"{LESSONS_URL}{locked.id}/recap/")
 
     assert response.status_code in {403, 404}
+
+
+# -- lesson materials: video and images ------------------------------------
+#
+# The two kinds added for lesson materials are the two that are not simply a
+# link with a different label. A VIDEO goes in an iframe, so what makes it a
+# VIDEO is that the link survived apps/learning/video.py. An IMAGE is bytes we
+# host and show inline, so it answers to the image validator rather than the
+# document one.
+def test_a_youtube_link_can_be_attached_to_a_lesson_as_a_video(
+    auth, employer, course, lesson
+):
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "lesson": str(lesson.id),
+            "kind": "VIDEO",
+            "title": "How TLS works",
+            "url": "https://youtu.be/dQw4w9WgXcQ?t=42",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201, response.data
+    video = response.data["video"]
+    # The embed is assembled by us, never echoed back from what was pasted.
+    assert video["provider"] == "youtube"
+    assert video["embed_url"].startswith("https://www.youtube-nocookie.com/embed/")
+    assert "start=42" in video["embed_url"]
+
+
+def test_a_video_that_cannot_be_embedded_is_refused_not_downgraded(
+    auth, employer, course, lesson
+):
+    """A look-alike host must not reach an iframe.
+
+    Refused rather than quietly stored as a LINK: an author who picked "video"
+    expects a player, and a silent downgrade is a surprise found later by a
+    learner instead of now by the person who can still fix it.
+    """
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "lesson": str(lesson.id),
+            "kind": "VIDEO",
+            "title": "Not really youtube",
+            "url": "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400, response.data
+    # The project wraps errors in an envelope; the field is what matters here,
+    # because the author needs to be told which box to fix.
+    assert "url" in response.data["error"]["details"]
+
+
+def test_an_image_material_is_accepted_and_carries_no_embed(
+    auth, employer, course, lesson
+):
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "lesson": str(lesson.id),
+            "kind": "IMAGE",
+            "title": "Handshake diagram",
+            "file": png(),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 201, response.data
+    assert response.data["file_url"]
+    assert response.data["video"] is None
+
+
+def test_an_image_material_is_checked_by_the_image_validator(
+    auth, employer, course, lesson
+):
+    """A .png that is not a PNG is stored XSS the moment it is served back."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "lesson": str(lesson.id),
+            "kind": "IMAGE",
+            "title": "Definitely a png",
+            "file": SimpleUploadedFile(
+                "payload.png", b"<html>not a png</html>", content_type="image/png"
+            ),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 400, response.data
+
+
+def test_an_image_material_needs_a_file_not_a_link(auth, employer, course, lesson):
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "lesson": str(lesson.id),
+            "kind": "IMAGE",
+            "title": "Diagram",
+            "url": "https://example.com/diagram.png",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400, response.data
+
+
+def test_lesson_materials_can_be_listed_for_one_lesson(
+    auth, employer, course, lesson, module
+):
+    """The lesson filter is what makes these lesson materials at all.
+
+    A course-wide reading list and a worksheet for lesson three are different
+    things, and the editor asks for one lesson at a time.
+    """
+    from apps.learning.models import CourseMaterial, Lesson
+
+    other = Lesson.objects.create(module=module, title="Later", order=1)
+    CourseMaterial.objects.create(
+        course=course, lesson=lesson, kind="LINK", title="Mine",
+        url="https://example.com/a",
+    )
+    CourseMaterial.objects.create(
+        course=course, lesson=other, kind="LINK", title="Theirs",
+        url="https://example.com/b",
+    )
+    CourseMaterial.objects.create(
+        course=course, lesson=None, kind="LINK", title="Course-wide",
+        url="https://example.com/c",
+    )
+
+    response = auth(employer).get(
+        f"{MATERIALS_URL}?course={course.id}&lesson={lesson.id}"
+    )
+
+    assert response.status_code == 200, response.data
+    titles = [row["title"] for row in response.data["results"]]
+    assert titles == ["Mine"]
+
+
+def test_a_material_cannot_be_pinned_to_another_courses_lesson(
+    auth, employer, course, lesson
+):
+    """The lesson has to belong to the course the material claims."""
+    from apps.learning.models import Course, CourseModule, Lesson
+
+    other_course = Course.objects.create(
+        title="Something else", slug="something-else", author=employer,
+        employer=employer.employer_profile, status=ModerationStatus.PUBLISHED,
+    )
+    other_module = CourseModule.objects.create(
+        course=other_course, title="M", order=0
+    )
+    stranger = Lesson.objects.create(module=other_module, title="Stranger", order=0)
+
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "lesson": str(stranger.id),
+            "kind": "LINK",
+            "title": "Wrong course",
+            "url": "https://example.com/",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400, response.data
+
+
+# -- books: a file when the author has one, a link when they do not ---------
+#
+# A book began as a link only. That is right for a citation and wrong for an
+# author with the PDF on their desktop, so it now takes either -- with its own
+# validator and its own size cap, because a book is not a worksheet.
+def epub(name="book.epub"):
+    """A minimal EPUB: a ZIP whose first entry is an uncompressed mimetype.
+
+    Built rather than stubbed, because the validator does not settle for the
+    ZIP magic number — a .epub that is a zip of anything would pass that and
+    then fail to open for every learner who downloaded it.
+    """
+    import zipfile
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            zipfile.ZipInfo("mimetype"),
+            "application/epub+zip",
+            compress_type=zipfile.ZIP_STORED,
+        )
+        archive.writestr("META-INF/container.xml", "<container/>")
+    return SimpleUploadedFile(
+        name, buffer.getvalue(), content_type="application/epub+zip"
+    )
+
+
+def test_a_book_can_be_uploaded_as_a_pdf(auth, employer, course, lesson):
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "lesson": str(lesson.id),
+            "kind": "BOOK",
+            "title": "Clean Code",
+            "file": pdf("clean-code.pdf"),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 201, response.data
+    assert response.data["file_url"]
+
+
+def test_a_book_can_be_uploaded_as_an_epub(auth, employer, course):
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "kind": "BOOK",
+            "title": "The Pragmatic Programmer",
+            "file": epub(),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 201, response.data
+    assert response.data["file_url"]
+
+
+def test_a_zip_renamed_to_epub_is_refused(auth, employer, course):
+    """The ZIP magic number alone proves nothing about an EPUB."""
+    import zipfile
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("something.txt", "not a book")
+
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "kind": "BOOK",
+            "title": "Definitely a book",
+            "file": SimpleUploadedFile(
+                "payload.epub", buffer.getvalue(), content_type="application/epub+zip"
+            ),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 400, response.data
+
+
+def test_a_book_can_still_be_a_link(auth, employer, course):
+    """A citation is a book the platform does not have, and that is fine."""
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "kind": "BOOK",
+            "title": "Clean Code, chapter 3",
+            "url": "https://example.com/clean-code",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201, response.data
+
+
+def test_a_book_may_be_bigger_than_an_ordinary_upload(auth, employer, course):
+    """5 MB is the worksheet cap and is not a book.
+
+    Sized just over the general limit and well under the book one, so this
+    fails the moment somebody points books back at MAX_UPLOAD_SIZE_MB.
+    """
+    from django.conf import settings
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    over_general = (settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024) + 1024
+    assert over_general < settings.MAX_BOOK_SIZE_MB * 1024 * 1024
+
+    payload = b"%PDF-1.7\n" + (b"0" * over_general)
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "kind": "BOOK",
+            "title": "A long one",
+            "file": SimpleUploadedFile(
+                "long.pdf", payload, content_type="application/pdf"
+            ),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 201, response.data
+
+
+def test_a_worksheet_is_still_held_to_the_ordinary_cap(auth, employer, course):
+    """Raising the book cap must not have raised everything else's."""
+    from django.conf import settings
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    payload = b"%PDF-1.7\n" + (
+        b"0" * ((settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024) + 1024)
+    )
+    response = auth(employer).post(
+        MATERIALS_URL,
+        {
+            "course": str(course.id),
+            "kind": "FILE",
+            "title": "Worksheet",
+            "file": SimpleUploadedFile(
+                "worksheet.pdf", payload, content_type="application/pdf"
+            ),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 400, response.data

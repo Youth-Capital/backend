@@ -373,14 +373,23 @@ __all__ = [
     "ContentProvider",
     "ImportStatus",
     "LessonAttachment",
+    "LessonQuiz",
     "new_translation_group",
 ]
 
 
 class MaterialKind(models.TextChoices):
     FILE = "FILE", _("File")
+    IMAGE = "IMAGE", _("Image")
+    VIDEO = "VIDEO", _("Video")
     LINK = "LINK", _("Link")
     BOOK = "BOOK", _("Book")
+
+
+#: Kinds whose content is bytes we host, and therefore must have a file.
+HOSTED_KINDS = [MaterialKind.FILE, MaterialKind.IMAGE]
+#: Kinds that point somewhere else, and therefore must have a url.
+LINKED_KINDS = [MaterialKind.VIDEO, MaterialKind.LINK, MaterialKind.BOOK]
 
 
 class CourseMaterial(BaseModel):
@@ -390,10 +399,23 @@ class CourseMaterial(BaseModel):
     belongs to the course, a worksheet belongs to the lesson it is used in, and
     forcing either shape on the other produces a mess of duplicates.
 
-    A material is a file *or* a link, never both. Books are links with a
-    different label — an author listing "Clean Code, chapter 3" is pointing at
-    something the platform does not host, and pretending otherwise would put a
-    download button in front of a book we do not have.
+    A material is a file *or* a link, never both, and the kind says which:
+    FILE and IMAGE are bytes we host, VIDEO, LINK and BOOK point elsewhere.
+
+    The five kinds are not decoration — each one is rendered differently and
+    each one carries a different promise. An IMAGE is shown inline rather than
+    offered as a download, because a diagram someone has to download to look
+    at is a diagram most learners will not look at. A VIDEO is a link that has
+    been checked hard enough to go in an iframe — see apps/learning/video.py,
+    and note that it is the checking, not the URL, that makes it a VIDEO.
+
+    A BOOK is the one kind that goes either way, and that is deliberate. It
+    began as a link only, on the reasoning that the platform does not host
+    books — which is true of a citation like "Clean Code, chapter 3" and
+    simply wrong about an author who has the PDF on their desktop and no way
+    to attach it. So a book is a file when there is one and a link when there
+    is not. It keeps its own validator (PDF or EPUB) and its own size cap,
+    because a book is not a worksheet.
 
     Downloads are gated by the same rule as lesson bodies: whoever may open the
     course may take its materials. Uploaded files are validated on the way in
@@ -438,12 +460,16 @@ class CourseMaterial(BaseModel):
             models.Index(fields=["course", "lesson"]),
         ]
         constraints = [
-            # A file or a link, and exactly one of them. Without this a row can
-            # exist that renders as neither, and the page has nothing to show.
+            # A file or a link, and the kind decides which. Without this a row
+            # can exist that renders as neither, and the page has nothing to
+            # show. IMAGE joins FILE here rather than being trusted to the
+            # serializer: the constraint is what holds when a row is written by
+            # a management command, a migration or the admin, none of which go
+            # through a serializer at all.
             models.CheckConstraint(
                 condition=(
-                    models.Q(kind="FILE", file__isnull=False)
-                    | models.Q(kind__in=["LINK", "BOOK"])
+                    models.Q(kind__in=["FILE", "IMAGE"], file__isnull=False)
+                    | models.Q(kind__in=["VIDEO", "LINK", "BOOK"])
                 ),
                 name="material_file_kind_has_a_file",
             ),
@@ -454,4 +480,62 @@ class CourseMaterial(BaseModel):
 
     @property
     def is_download(self) -> bool:
-        return self.kind == MaterialKind.FILE
+        """Whether this is bytes to hand over, rather than a place to go.
+
+        Asks the file, not the kind. A BOOK is either now, so a kind check
+        would call an uploaded book a link and offer no way to download it.
+        """
+        return bool(self.file)
+
+
+class LessonQuiz(BaseModel):
+    """One learner's own comprehension check for one lesson.
+
+    The lesson still carries a shared set on `Lesson.check_questions`, and it
+    is still the fallback -- when no model is configured, or when generation
+    produces nothing the lesson supports, everybody gets the shared one and the
+    feature degrades to what it was. This table is the per-learner layer on top.
+
+    Why per-learner at all: a single set of three questions stops measuring
+    anything the moment the first person through posts the answers. Different
+    questions and a different option order per learner does not make the check
+    unbeatable -- two people in a room can still work through it together --
+    but it does break the cheap failure, which is an answer key in a group chat.
+
+    The answer key lives here and is never serialised to the page: the API
+    strips `answer` and `why` on the way out and grades on the way back in. A
+    quiz whose answers are in the payload measures nothing at all, which is the
+    same reason `Lesson.check_questions` has always been served stripped.
+    """
+
+    lesson = models.ForeignKey(
+        Lesson, on_delete=models.CASCADE, related_name="personal_quizzes"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="lesson_quizzes"
+    )
+
+    #: [{"question": str, "options": [str x4], "answer": int, "why": str}]
+    questions = models.JSONField(default=list)
+
+    #: A fingerprint of the lesson text this was written from. When the author
+    #: edits the lesson, the quiz no longer describes it and is regenerated
+    #: rather than quietly asking about a paragraph that is gone.
+    source_hash = models.CharField(max_length=32)
+
+    #: Bumped on each regeneration. Feeds the generator's seed, so a second
+    #: quiz for the same person and lesson is a different quiz rather than the
+    #: same one with the options moved.
+    attempt = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        db_table = "learning_lesson_quiz"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["lesson", "user"], name="uniq_lesson_quiz_per_user"
+            )
+        ]
+        indexes = [models.Index(fields=["user", "lesson"])]
+
+    def __str__(self) -> str:
+        return f"quiz for {self.user_id} on {self.lesson_id}"

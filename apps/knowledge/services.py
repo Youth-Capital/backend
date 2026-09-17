@@ -19,7 +19,6 @@ OBJECTIVE_SOURCES = frozenset(
         EvidenceSource.TEST,
         EvidenceSource.COURSE,
         EvidenceSource.EXPERIENCE,
-        EvidenceSource.MENTOR,
         EvidenceSource.EMPLOYER,
     }
 )

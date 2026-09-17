@@ -1,11 +1,11 @@
 from django.apps import AppConfig
 
 
-class MentorshipConfig(AppConfig):
+class FeedbackConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
-    name = "apps.mentorship"
-    label = "mentorship"
-    verbose_name = "Mentorship"
+    name = "apps.feedback"
+    label = "feedback"
+    verbose_name = "Platform feedback"
 
     def ready(self) -> None:
         from . import signals  # noqa: F401

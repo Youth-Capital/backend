@@ -31,7 +31,7 @@ from .models import (
 
 #: Roles a person may self-register as. ADMIN is deliberately absent — it is
 #: granted from the Django admin, never claimed at the registration endpoint.
-SELF_SERVICE_ROLES = frozenset({Role.STUDENT, Role.EMPLOYER, Role.MENTOR})
+SELF_SERVICE_ROLES = frozenset({Role.STUDENT, Role.EMPLOYER})
 
 TOKEN_TTL = timedelta(hours=24)
 PASSWORD_RESET_TTL = timedelta(hours=1)
@@ -116,7 +116,7 @@ def _create_role_profile(user: User, *, birth_date: date | None = None, **fields
     Imported lazily: apps.profiles depends on apps.accounts, so a module-level
     import would be circular.
     """
-    from apps.profiles.models import EmployerProfile, MentorProfile, StudentProfile
+    from apps.profiles.models import EmployerProfile, StudentProfile
     from apps.profiles.services import generate_youth_id
 
     if user.role == Role.STUDENT:
@@ -135,13 +135,6 @@ def _create_role_profile(user: User, *, birth_date: date | None = None, **fields
             brand_name=fields.get("company_name", ""),
             contact_email=user.email,
             region_id=fields.get("region_id"),
-        )
-    if user.role == Role.MENTOR:
-        return MentorProfile.objects.create(
-            user=user,
-            first_name=fields.get("first_name", ""),
-            last_name=fields.get("last_name", ""),
-            headline=fields.get("headline", ""),
         )
     return None
 

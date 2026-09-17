@@ -20,6 +20,10 @@ class TestType(models.TextChoices):
     #: Employer-owned screening. Deliberately excluded from the global
     #: knowledge profile — see docs/01-ANALYSIS.md §3.2.
     SCREENING = "SCREENING", _("Employer screening")
+    #: Situational judgement over behavioural competencies. Scored by option
+    #: weight rather than by right and wrong, and it never fails: a
+    #: soft-skill profile is a shape, not a pass mark.
+    SOFT_SKILL = "SOFT_SKILL", _("Soft skills assessment")
 
 
 class Test(BaseModel):
@@ -85,6 +89,10 @@ class Test(BaseModel):
         )
 
     @property
+    def is_soft_skill(self) -> bool:
+        return self.type == TestType.SOFT_SKILL
+
+    @property
     def max_score(self) -> int:
         return sum(q.points for q in self.questions.all())
 
@@ -106,6 +114,11 @@ class QuestionType(models.TextChoices):
     MULTIPLE = "MULTIPLE", _("Multiple choice")
     TRUE_FALSE = "TRUE_FALSE", _("True / false")
     SHORT_ANSWER = "SHORT_ANSWER", _("Short answer")
+    #: "What would you do?" — every option is a defensible action, and each
+    #: carries a weight saying how much of the competency it demonstrates.
+    #: There is no correct answer to leak, which is why these questions can
+    #: show their explanations without giving the test away.
+    SITUATIONAL = "SITUATIONAL", _("Situational judgement")
 
 
 class Question(BaseModel):
@@ -143,6 +156,12 @@ class AnswerOption(BaseModel):
     )
     text = models.CharField(max_length=500)
     is_correct = models.BooleanField(default=False)
+    #: Percentage of the question's points this option is worth. Used by
+    #: SITUATIONAL questions, where "worse" and "wrong" are different things:
+    #: escalating immediately is not wrong, it just shows less independence
+    #: than trying first. Ignored by the right/wrong question types, which
+    #: score from `is_correct`.
+    weight = models.PositiveSmallIntegerField(default=0)
     order = models.PositiveSmallIntegerField(default=0)
 
     class Meta:

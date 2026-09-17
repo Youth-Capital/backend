@@ -542,7 +542,7 @@ def _match_method(user) -> Answer:
             "weights": weights,
             "evidence_weights": {
                 "SELF": 0.35, "COURSE": 0.65, "EXPERIENCE": 0.70,
-                "MENTOR": 0.85, "TEST": 0.90, "EMPLOYER": 1.00,
+                "TEST": 0.90, "EMPLOYER": 1.00,
             },
         },
         sources=[{"type": "MatchWeightProfile", "screen": ""}],

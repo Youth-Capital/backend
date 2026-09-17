@@ -40,9 +40,22 @@ def mark_matches_stale(*, student=None, vacancy=None) -> int:
 
 
 def candidate_pool_for_vacancy(vacancy: Vacancy):
-    """Students worth scoring against this vacancy."""
+    """Students worth scoring against this vacancy.
+
+    Two filters, and they answer different questions. Skill overlap asks
+    whether there is anything to compute — a candidate sharing no skill with
+    the vacancy will never rank, and scoring them is wasted work. Relevance
+    asks whether they would take the job: somebody whose stated direction is
+    elsewhere is somebody likely to decline, and putting them on an employer's
+    shortlist wastes a real conversation rather than a few CPU cycles.
+
+    A candidate who has declared nothing stays in. Absence of a preference is
+    not a preference — see apps/matching/relevance.py.
+    """
     from apps.accounts.models import User
     from apps.common.enums import Role
+
+    from .relevance import RelevanceContext
 
     skill_ids = list(vacancy.skill_links.values_list("skill_id", flat=True))
     base = User.objects.filter(role=Role.STUDENT, is_active=True)
@@ -54,26 +67,62 @@ def candidate_pool_for_vacancy(vacancy: Vacancy):
         .values_list("user_id", flat=True)
         .distinct()[:MAX_CANDIDATES_PER_VACANCY]
     )
-    return base.filter(id__in=list(candidate_ids)).select_related("student_profile")
+    candidates = (
+        base.filter(id__in=list(candidate_ids))
+        .select_related("student_profile", "student_profile__target_profession")
+        .prefetch_related("student_profile__interests")
+    )
+
+    # In Python rather than SQL: relevance walks the taxonomy (the target
+    # profession's skills against the vacancy's), which is a join too far for
+    # a queryset and is bounded here by MAX_CANDIDATES_PER_VACANCY anyway.
+    return [
+        candidate
+        for candidate in candidates
+        if RelevanceContext.for_student(candidate)
+        .score_vacancy(vacancy)
+        .relevant
+    ]
 
 
 def vacancy_pool_for_student(student):
-    """Open vacancies worth scoring for this student."""
+    """Open vacancies worth scoring for this student.
+
+    The skill filter is what it always was. The relevance filter is the new
+    half, and it is the one that stops a data-analytics learner being offered
+    a DevOps job because both happen to want Python.
+
+    Falls back to the skill-only pool when the learner has declared neither a
+    target profession nor an interest: filtering on a signal that does not
+    exist would hand them an empty page.
+    """
+    from .relevance import RelevanceContext
+
     skill_ids = list(
         UserSkill.objects.filter(user=student).values_list("skill_id", flat=True)
     )
     queryset = Vacancy.objects.filter(status=ModerationStatus.PUBLISHED)
     if not skill_ids:
         return queryset.none()
-    return (
+
+    pool = (
         queryset.filter(skill_links__skill_id__in=skill_ids)
         .distinct()
         .select_related("employer", "region", "profession")
+        .prefetch_related("skill_links")
     )
+
+    context = RelevanceContext.for_student(student)
+    if not context.known:
+        return pool
+
+    return [vacancy for vacancy in pool if context.score_vacancy(vacancy).relevant]
 
 
 def recompute_matches_for_student(student, *, limit: int | None = None) -> int:
     profile = MatchWeightProfile.active()
+    # A list when relevance filtered it, a queryset when it did not. Slicing
+    # means the same thing to both.
     vacancies = vacancy_pool_for_student(student)
     if limit:
         vacancies = vacancies[:limit]

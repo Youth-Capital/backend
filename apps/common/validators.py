@@ -19,6 +19,7 @@ MAX_UPLOAD_BYTES = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 DOCUMENT_EXTENSIONS = {".pdf"}
+BOOK_EXTENSIONS = {".pdf", ".epub"}
 
 
 def _extension(name: str) -> str:
@@ -26,11 +27,12 @@ def _extension(name: str) -> str:
     return f".{ext.lower()}" if ext else ""
 
 
-def validate_upload_size(file_obj) -> None:
-    if file_obj.size > MAX_UPLOAD_BYTES:
+def validate_upload_size(file_obj, limit_mb: int | None = None) -> None:
+    limit = MAX_UPLOAD_BYTES if limit_mb is None else limit_mb * 1024 * 1024
+    if file_obj.size > limit:
         raise ValidationError(
             _("File is larger than %(limit)s MB.")
-            % {"limit": settings.MAX_UPLOAD_SIZE_MB}
+            % {"limit": limit_mb or settings.MAX_UPLOAD_SIZE_MB}
         )
 
 
@@ -91,5 +93,48 @@ def validate_document_upload(file_obj) -> None:
         file_obj.seek(0)
         if file_obj.read(5) != b"%PDF-":
             raise ValidationError(_("File is not a valid PDF."))
+    finally:
+        file_obj.seek(position)
+
+
+def validate_book_upload(file_obj) -> None:
+    """A book someone actually has, rather than a link to one they do not.
+
+    Two formats and its own size cap, because a book is not a worksheet: see
+    the note in settings. Both are checked by their bytes, not their name.
+
+    EPUB takes a little more work than PDF. It is a ZIP, so the first four
+    bytes only prove it is a ZIP — a .epub that is really a zip of anything
+    would pass a magic-number check and fail to open for every learner who
+    downloaded it. The format pins this down: the archive's first entry must
+    be called "mimetype", stored uncompressed, and contain exactly
+    "application/epub+zip". That string therefore sits at a fixed offset near
+    the start of a real EPUB, which is what is checked here.
+    """
+    validate_upload_size(file_obj, settings.MAX_BOOK_SIZE_MB)
+
+    extension = _extension(file_obj.name)
+    if extension not in BOOK_EXTENSIONS:
+        raise ValidationError(_("Only PDF and EPUB books are allowed."))
+
+    content_type = getattr(file_obj, "content_type", "")
+    if content_type and content_type not in settings.ALLOWED_UPLOAD_BOOK_TYPES:
+        raise ValidationError(_("Unsupported book format."))
+
+    position = file_obj.tell()
+    try:
+        file_obj.seek(0)
+        head = file_obj.read(64)
+
+        if extension == ".pdf":
+            if not head.startswith(b"%PDF-"):
+                raise ValidationError(_("File is not a valid PDF."))
+            return
+
+        # .epub
+        if not head.startswith(b"PK\x03\x04"):
+            raise ValidationError(_("File is not a valid EPUB."))
+        if b"application/epub+zip" not in head:
+            raise ValidationError(_("File is not a valid EPUB."))
     finally:
         file_obj.seek(position)

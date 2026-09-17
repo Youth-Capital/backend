@@ -13,7 +13,6 @@ class Language(models.TextChoices):
 class Role(models.TextChoices):
     STUDENT = "STUDENT", _("Student")
     EMPLOYER = "EMPLOYER", _("Employer")
-    MENTOR = "MENTOR", _("Mentor")
     ADMIN = "ADMIN", _("Administrator")
 
 
@@ -75,9 +74,14 @@ class EvidenceSource(models.TextChoices):
     """
 
     SELF = "SELF", _("Self-declared")
+    #: A situational-judgement soft-skill test. Its own source rather than
+    #: TEST, because the two are not the same kind of proof: a knowledge test
+    #: observes what someone can do, an SJT records what they say they would
+    #: do. Weighing them alike would let a twenty-minute questionnaire count
+    #: as much as a graded exam.
+    SOFT_TEST = "SOFT_TEST", _("Soft skills assessment")
     COURSE = "COURSE", _("Course completion")
     EXPERIENCE = "EXPERIENCE", _("Work experience")
-    MENTOR = "MENTOR", _("Mentor assessment")
     TEST = "TEST", _("Test result")
     EMPLOYER = "EMPLOYER", _("Employer verification")
 
@@ -85,9 +89,9 @@ class EvidenceSource(models.TextChoices):
 #: Confidence multiplier per evidence source (0-1).
 EVIDENCE_WEIGHTS: dict[str, float] = {
     EvidenceSource.SELF: 0.35,
+    EvidenceSource.SOFT_TEST: 0.60,
     EvidenceSource.COURSE: 0.65,
     EvidenceSource.EXPERIENCE: 0.70,
-    EvidenceSource.MENTOR: 0.85,
     EvidenceSource.TEST: 0.90,
     EvidenceSource.EMPLOYER: 1.00,
 }

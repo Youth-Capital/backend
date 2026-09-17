@@ -55,7 +55,7 @@ class DevelopmentPlanViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         return (
             DevelopmentPlan.objects.filter(user=self.request.user)
-            .prefetch_related("milestones__tasks__related_skills", "reviews__reviewer")
+            .prefetch_related("milestones__tasks__related_skills")
             .order_by("-created_at")
         )
 

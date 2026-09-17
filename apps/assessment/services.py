@@ -117,17 +117,32 @@ def submit_attempt(attempt: TestAttempt, answers: list[dict]) -> TestAttempt:
 
         if question.skill_id:
             bucket = per_skill.setdefault(
-                str(question.skill_id), {"total": 0, "correct": 0, "skill": question.skill_id}
+                str(question.skill_id),
+                {
+                    "total": 0,
+                    "correct": 0,
+                    "points": 0,
+                    "max_points": 0,
+                    "skill": question.skill_id,
+                },
             )
             bucket["total"] += 1
             bucket["correct"] += 1 if is_correct else 0
+            bucket["points"] += points
+            bucket["max_points"] += question.points
 
     percentage = round(100 * earned_points / total_points) if total_points else 0
 
     attempt.score = earned_points
     attempt.max_score = total_points
     attempt.percentage = percentage
-    attempt.passed = percentage >= attempt.test.passing_score
+    # A soft-skill assessment has no pass mark: there is no failing at being
+    # yourself. Completing it is the outcome, and the profile is the result.
+    attempt.passed = (
+        True
+        if attempt.test.is_soft_skill
+        else percentage >= attempt.test.passing_score
+    )
     attempt.submitted_at = timezone.now()
     attempt.time_spent_seconds = int(
         (attempt.submitted_at - attempt.started_at).total_seconds()
@@ -158,6 +173,23 @@ def _grade_question(question: Question, answer: dict | None) -> tuple[bool, int]
     if not answer:
         return False, 0
 
+    if question.type == QuestionType.SITUATIONAL:
+        # No right answer — the option's weight says how much of the
+        # competency the chosen action demonstrates. `is_correct` is kept as a
+        # statistic ("chose a strong response") and never shown as a verdict,
+        # because telling someone their way of handling a conflict was wrong is
+        # not what this test measures.
+        selected = [str(o) for o in (answer.get("option_ids") or [])]
+        if len(selected) != 1:
+            return False, 0
+        option = next(
+            (o for o in question.options.all() if str(o.id) == selected[0]), None
+        )
+        if option is None:
+            return False, 0
+        weight = max(0, min(100, option.weight))
+        return weight >= 70, round(question.points * weight / 100)
+
     if question.type == QuestionType.SHORT_ANSWER:
         given = (answer.get("text") or "").strip().casefold()
         accepted = {str(a).strip().casefold() for a in question.accepted_answers or []}
@@ -185,8 +217,12 @@ def _store_skill_results(attempt: TestAttempt, per_skill: dict) -> None:
                 skill_id=data["skill"],
                 questions_total=data["total"],
                 questions_correct=data["correct"],
-                percentage=round(100 * data["correct"] / data["total"])
-                if data["total"]
+                # From points, not from the correct count. For a right/wrong
+                # test with equal points the two are the same number; where
+                # they differ, points are what the author actually weighted,
+                # and a situational question has no correct count to divide by.
+                percentage=round(100 * data["points"] / data["max_points"])
+                if data["max_points"]
                 else 0,
             )
             for data in per_skill.values()
@@ -228,6 +264,14 @@ def _apply_test_results(attempt: TestAttempt, per_skill: dict) -> None:
     if not test.feeds_knowledge_profile:
         return
 
+    # A situational-judgement answer is a self-report about behaviour, not an
+    # observation of performance, so it enters the trail at its own weight
+    # (0.60) and never marks a skill VERIFIED. Matching then treats "says they
+    # handle conflict well" as exactly what it is.
+    source = (
+        EvidenceSource.SOFT_TEST if test.is_soft_skill else EvidenceSource.TEST
+    )
+
     touched = []
     if per_skill:
         skills = {str(s.id): s for s in Skill.objects.filter(id__in=per_skill.keys())}
@@ -235,11 +279,15 @@ def _apply_test_results(attempt: TestAttempt, per_skill: dict) -> None:
             skill = skills.get(skill_id)
             if skill is None:
                 continue
-            score = round(100 * data["correct"] / data["total"]) if data["total"] else 0
+            score = (
+                round(100 * data["points"] / data["max_points"])
+                if data["max_points"]
+                else 0
+            )
             record_skill_evidence(
                 user=user,
                 skill=skill,
-                source=EvidenceSource.TEST,
+                source=source,
                 score=score,
                 ref_type="Test",
                 ref_id=test.id,
@@ -252,7 +300,7 @@ def _apply_test_results(attempt: TestAttempt, per_skill: dict) -> None:
             record_skill_evidence(
                 user=user,
                 skill=link.skill,
-                source=EvidenceSource.TEST,
+                source=source,
                 score=attempt.percentage,
                 ref_type="Test",
                 ref_id=test.id,

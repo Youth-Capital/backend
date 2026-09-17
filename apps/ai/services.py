@@ -50,6 +50,17 @@ class Recommendation:
 
 
 @dataclass
+class CapabilityInsight:
+    """Hard and soft ability side by side — never averaged together."""
+
+    hard: dict = field(default_factory=dict)
+    soft: dict = field(default_factory=dict)
+    balance: str = "insufficient_data"
+    notes: list[dict] = field(default_factory=list)
+    next_actions: list[dict] = field(default_factory=list)
+
+
+@dataclass
 class SkillGapReport:
     profession: str
     readiness: int
@@ -106,7 +117,6 @@ class AIService(ABC):
     def recommend_vacancies(self, user, limit: int = 5) -> list[Recommendation]: ...
 
     @abstractmethod
-    def recommend_mentors(self, user, limit: int = 3) -> list[Recommendation]: ...
 
     @abstractmethod
     def explain_candidate(self, student, vacancy) -> Explanation: ...
@@ -379,51 +389,26 @@ class RuleBasedAIService(AIService):
                 ).order_by("-overall_score")[:limit]
             ]
 
-    def recommend_mentors(self, user, limit: int = 3) -> list[Recommendation]:
-        from apps.common.enums import VerificationStatus
-        from apps.profiles.models import MentorProfile
-        from apps.profiles.services import get_skill_gap
+    def analyze_capability(self, user) -> CapabilityInsight: ...
 
-        with _logged(
-            AIUseCase.CAREER,
-            user=user,
-            provider=self.provider,
-            model=self.model,
-            payload={"user": str(user.id)},
-        ):
-            profile = getattr(user, "student_profile", None)
-            profession = getattr(profile, "target_profession", None)
-            if profession is None:
-                return []
+    def analyze_capability(self, user) -> CapabilityInsight:
+        """Hard and soft ability, reported side by side.
 
-            gap = get_skill_gap(user, profession)
-            needed = [e["skill_id"] for e in gap["missing_skills"] + gap["partial_skills"]]
+        The two are never averaged into one number: a strong engineer who has
+        not been assessed on communication and a strong communicator who
+        cannot yet code would come out identical, and the advice each needs is
+        the opposite of the other's.
+        """
+        from .capability import build_capability_report
 
-            mentors = (
-                MentorProfile.objects.filter(
-                    verification_status=VerificationStatus.VERIFIED,
-                    accepting_students=True,
-                )
-                .filter(expertise__id__in=needed)
-                .distinct()
-                .order_by("-rating_avg")[:limit]
-            )
-            return [
-                Recommendation(
-                    type=RecommendationType.MENTOR,
-                    ref_type="MentorProfile",
-                    ref_id=str(mentor.id),
-                    title=mentor.full_name or mentor.headline,
-                    score=min(100, 60 + int(float(mentor.rating_avg) * 8)),
-                    reason_code="mentor_expertise_match",
-                    reason_data={
-                        "headline": mentor.headline,
-                        "rating": float(mentor.rating_avg),
-                        "sessions": mentor.sessions_count,
-                    },
-                )
-                for mentor in mentors
-            ]
+        report = build_capability_report(user)
+        return CapabilityInsight(
+            hard=report.hard,
+            soft=report.soft,
+            balance=report.balance,
+            notes=report.notes,
+            next_actions=report.next_actions,
+        )
 
     # -- matching --------------------------------------------------------
     def calculate_match(self, student, vacancy):
@@ -579,7 +564,6 @@ def refresh_recommendations(user, *, limit: int = 5) -> int:
     produced += service.recommend_courses(user, limit=limit)
     produced += service.recommend_vacancies(user, limit=limit)
     produced += service.generate_career_recommendations(user, limit=3)
-    produced += service.recommend_mentors(user, limit=3)
 
     for item in produced:
         AIRecommendation.objects.update_or_create(

@@ -95,7 +95,7 @@ class KnowledgeConfig(BaseModel):
     is_active = models.BooleanField(default=False)
     weights = models.JSONField(
         default=dict,
-        help_text='e.g. {"test": 0.5, "course": 0.25, "experience": 0.15, "mentor": 0.1}',
+        help_text='e.g. {"test": 0.6, "course": 0.25, "experience": 0.15}',
     )
     decay_half_life_days = models.PositiveSmallIntegerField(default=540)
     notes = models.TextField(blank=True)
@@ -137,6 +137,5 @@ DEFAULT_KNOWLEDGE_WEIGHTS: dict[str, float] = {
     "TEST": 0.50,
     "COURSE": 0.25,
     "EXPERIENCE": 0.15,
-    "MENTOR": 0.10,
     "EMPLOYER": 0.10,
 }

@@ -26,7 +26,6 @@ from .serializers import (
     DeclareSkillSerializer,
     EducationSerializer,
     EmployerProfileSerializer,
-    MentorProfileSerializer,
     OnboardingSerializer,
     StudentProfileSerializer,
     UserSkillDetailSerializer,
@@ -45,8 +44,6 @@ class MyProfileView(APIView):
             return getattr(user, "student_profile", None), StudentProfileSerializer
         if user.role == Role.EMPLOYER:
             return getattr(user, "employer_profile", None), EmployerProfileSerializer
-        if user.role == Role.MENTOR:
-            return getattr(user, "mentor_profile", None), MentorProfileSerializer
         return None, None
 
     def get(self, request):

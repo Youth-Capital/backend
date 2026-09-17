@@ -283,12 +283,26 @@ class VacancyViewSet(viewsets.ModelViewSet):
             )
         )
 
+        # CV rating for the whole page in one query. Read from the stored
+        # column rather than recomputed: fifty candidates × six queries each is
+        # not a list. The card recomputes when it is opened.
+        from apps.cv.models import CVDocument
+
+        cv_by_user: dict = {}
+        for row in (
+            CVDocument.objects.filter(user_id__in=[m.student_id for m in matches])
+            .order_by("user_id", "-is_primary", "-updated_at")
+            .values("user_id", "quality_score", "quality_computed_at")
+        ):
+            cv_by_user.setdefault(row["user_id"], row)
+
         rows = []
         for match in matches:
             profile = getattr(match.student, "student_profile", None)
             identified = can_view_student_profile(
                 viewer=request.user, student_user=match.student
             )
+            cv_row = cv_by_user.get(match.student_id)
             rows.append(
                 {
                     "user_id": str(match.student_id),
@@ -296,6 +310,8 @@ class VacancyViewSet(viewsets.ModelViewSet):
                     "name": profile.full_name if (identified and profile) else None,
                     "identified": identified,
                     "has_applied": match.student_id in applied,
+                    "has_cv": cv_row is not None,
+                    "cv_rating": cv_row["quality_score"] if cv_row else None,
                     "match": {
                         "overall": match.overall_score,
                         "coverage": match.coverage_score,
@@ -467,6 +483,37 @@ class VacancyViewSet(viewsets.ModelViewSet):
             for entry in Experience.objects.filter(user=student)[:20]
         ]
 
+        # The résumé itself, and what the platform rates it at. Both follow the
+        # identity rule above: an unidentified candidate's CV comes back with
+        # the capability intact and everything that names them stripped, by the
+        # same function the student's own preview uses — one assembler, so the
+        # two views cannot drift apart.
+        from apps.cv.models import CVDocument
+        from apps.cv.rating import refresh_cv_rating
+        from apps.cv.services import build_cv_payload
+
+        cv_document = (
+            CVDocument.objects.filter(user=student)
+            .select_related("target_profession")
+            .order_by("-is_primary", "-updated_at")
+            .first()
+        )
+        cv_block = None
+        if cv_document is not None:
+            rating = refresh_cv_rating(cv_document)
+            cv_block = {
+                "id": str(cv_document.id),
+                "title": cv_document.title,
+                "language": cv_document.language,
+                "updated_at": cv_document.updated_at,
+                "rating": {
+                    "overall": rating["overall"],
+                    "band": rating["band"],
+                    "components": rating["components"],
+                },
+                "document": build_cv_payload(cv_document, identified=identified),
+            }
+
         certificates = [
             {
                 "course": certificate.course.title,
@@ -545,6 +592,7 @@ class VacancyViewSet(viewsets.ModelViewSet):
                 "tests": tests,
                 "experience_entries": experience,
                 "certificates": certificates,
+                "cv": cv_block,
             }
         )
 
@@ -561,7 +609,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         user = self.request.user
         base = (
             Application.objects.select_related(
-                "vacancy", "vacancy__employer", "student", "student__student_profile"
+                "vacancy", "vacancy__employer", "student", "student__student_profile", "cv"
             )
             .prefetch_related("events__actor", "interviews")
             .order_by("-applied_at")
@@ -577,6 +625,33 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         if self.request.user.role in {Role.EMPLOYER, Role.ADMIN}:
             return EmployerApplicationSerializer
         return ApplicationSerializer
+
+    def get_serializer_context(self):
+        """One query for the CV ratings of everyone on the page.
+
+        Applications that carried no CV still have a primary one worth rating,
+        and looking each up inside the serialiser would be a query per row.
+        """
+        context = super().get_serializer_context()
+        if self.request.user.role not in {Role.EMPLOYER, Role.ADMIN}:
+            return context
+
+        from apps.cv.models import CVDocument
+
+        student_ids = list(
+            self.filter_queryset(self.get_queryset()).values_list(
+                "student_id", flat=True
+            )[:200]
+        )
+        ratings: dict = {}
+        for row in (
+            CVDocument.objects.filter(user_id__in=student_ids)
+            .order_by("user_id", "-is_primary", "-updated_at")
+            .values("user_id", "quality_score")
+        ):
+            ratings.setdefault(row["user_id"], row["quality_score"])
+        context["cv_rating_by_user"] = ratings
+        return context
 
     @extend_schema(
         request=CreateApplicationSerializer, responses={201: ApplicationSerializer}
