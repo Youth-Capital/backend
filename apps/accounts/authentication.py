@@ -58,6 +58,51 @@ def read_refresh_cookie(request) -> str | None:
     return request.COOKIES.get(settings.AUTH_COOKIE_NAME)
 
 
+#: The header the SPA sends with every request. The value is not a secret; its
+#: presence is the point. An HTML form cannot set a header at all, and a script
+#: on another origin that tries to must first ask the browser's permission with
+#: a preflight — which CORS answers "no" for every origin not on our list.
+SPA_HEADER = "HTTP_X_REQUESTED_WITH"
+SPA_HEADER_VALUE = "XMLHttpRequest"
+
+
+def assert_not_cross_site(request) -> None:
+    """Refuse a cookie-authenticated request another site could have forged.
+
+    Refresh and logout are the only endpoints that act on the refresh cookie,
+    so they are the only ones a hostile page can drive with the victim's
+    credentials attached. With `SameSite=Lax` a cross-site POST carries no
+    cookie at all; this is for the deployment that has to run with `None`,
+    and for the day somebody changes the setting without reading this.
+
+    Two checks:
+
+    * the SPA's header must be present — a forged form or a bare fetch lacks it;
+    * with `SameSite=None`, an Origin the browser reports must be one we
+      configured. Under `Lax` the Origin is not compared: the dev proxy and a
+      phone on the local network both present origins that are legitimately
+      not on the list, and the cookie would not have travelled cross-site
+      anyway.
+    """
+    from apps.common.exceptions import NotAllowed
+
+    if request.META.get(SPA_HEADER) != SPA_HEADER_VALUE:
+        raise NotAllowed(
+            "This request must come from the application.", code="csrf_failed"
+        )
+
+    if str(settings.AUTH_COOKIE_SAMESITE).lower() == "none":
+        origin = request.META.get("HTTP_ORIGIN")
+        trusted = set(getattr(settings, "CORS_ALLOWED_ORIGINS", [])) | set(
+            getattr(settings, "CSRF_TRUSTED_ORIGINS", [])
+        )
+        if origin and origin not in trusted:
+            raise NotAllowed(
+                "This request came from an origin that is not allowed.",
+                code="csrf_failed",
+            )
+
+
 def issue_tokens(user) -> tuple[str, str]:
     """Return (access, refresh) for a freshly authenticated user."""
     refresh = RefreshToken.for_user(user)

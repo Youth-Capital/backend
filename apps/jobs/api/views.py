@@ -10,9 +10,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.access import company_owned, owns_company_object
 from apps.common.enums import ModerationStatus, Role
 from apps.common.exceptions import DomainError, NotAllowed
-from apps.common.permissions import IsAdmin, IsEmployer, IsStudent
+from apps.common.permissions import IsAdmin, IsEmployer, IsEmployerOrAdmin, IsOwnerOrAdmin, IsStudent
 from apps.common.throttling import CandidateSearchThrottle
 
 from ..models import (
@@ -617,8 +618,9 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         if user.is_admin:
             return base
         if user.role == Role.EMPLOYER:
-            company = getattr(user, "employer_profile", None)
-            return base.filter(vacancy__employer=company)
+            # Null-safe: an employer with no company profile yet sees nothing,
+            # rather than every application against a null employer.
+            return base.filter(company_owned(user, "vacancy__employer"))
         return base.filter(student=user)
 
     def get_serializer_class(self):
@@ -788,7 +790,7 @@ class InterviewViewSet(viewsets.ModelViewSet):
 
 @extend_schema(tags=["jobs"])
 class SavedVacancyViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsStudent]
+    permission_classes = [IsAuthenticated, IsStudent, IsOwnerOrAdmin]
     serializer_class = SavedVacancySerializer
 
     def get_queryset(self):
@@ -802,8 +804,33 @@ class SavedVacancyViewSet(viewsets.ModelViewSet):
 
 @extend_schema(tags=["jobs"])
 class PlacementViewSet(viewsets.ModelViewSet):
+    """Employment outcomes: read by the two parties, written only by the hirer.
+
+    This is the number the programme is judged on, and it used to be a plain
+    `ModelViewSet` behind `IsAuthenticated` with `student` and `employer`
+    writable in the serialiser and no `perform_create`. That is three separate
+    holes in one endpoint: a learner could post a hiring record for themselves,
+    post one onto somebody else's account, or delete their own again — and any
+    caller could put any company's name on it.
+
+    What replaces it:
+
+    * writing is an employer's or an admin's action, never a learner's;
+    * who was hired and by whom is read off the application, so the request
+      body cannot name a student or a company at all;
+    * the application must belong to the caller's own vacancy, so one company
+      cannot record hirings against another's.
+
+    Reading stays as it was: each side sees its own rows.
+    """
+
     permission_classes = [IsAuthenticated]
     serializer_class = PlacementSerializer
+
+    def get_permissions(self):
+        if self.action in {"create", "update", "partial_update", "destroy"}:
+            return [IsAuthenticated(), IsEmployerOrAdmin()]
+        return super().get_permissions()
 
     def get_queryset(self):
         user = self.request.user
@@ -813,8 +840,38 @@ class PlacementViewSet(viewsets.ModelViewSet):
         if user.is_admin:
             return base
         if user.role == Role.EMPLOYER:
-            return base.filter(employer=getattr(user, "employer_profile", None))
+            # Null-safe: an employer with no company profile gets nothing,
+            # rather than every placement whose employer happens to be null.
+            return base.filter(company_owned(user))
         return base.filter(student=user)
+
+    def _assert_can_write(self, placement: Placement) -> None:
+        user = self.request.user
+        if user.is_admin:
+            return
+        if owns_company_object(user, placement):
+            return
+        raise NotAllowed("This placement belongs to another company.")
+
+    def perform_create(self, serializer):
+        """Derive the parties from the application; never from the body."""
+        application = serializer.validated_data.get("application")
+        if application is None:
+            raise DomainError(
+                "A placement must reference the application it came from.",
+                code="application_required",
+            )
+
+        user = self.request.user
+        vacancy = application.vacancy
+        if not user.is_admin and not owns_company_object(user, vacancy):
+            raise NotAllowed("That application is not for one of your vacancies.")
+
+        serializer.save(
+            student=application.student,
+            employer=vacancy.employer,
+            vacancy=vacancy,
+        )
 
     def perform_update(self, serializer):
         """Income is only recorded with the student's explicit consent."""
@@ -822,6 +879,7 @@ class PlacementViewSet(viewsets.ModelViewSet):
         from apps.accounts.services import has_consent
 
         placement = self.get_object()
+        self._assert_can_write(placement)
         if serializer.validated_data.get("income_reported") is not None:
             if not has_consent(placement.student, ConsentType.INCOME_TRACKING):
                 raise NotAllowed(
@@ -829,6 +887,10 @@ class PlacementViewSet(viewsets.ModelViewSet):
                     code="consent_required",
                 )
         serializer.save()
+
+    def perform_destroy(self, instance):
+        self._assert_can_write(instance)
+        instance.delete()
 
 
 @extend_schema(tags=["jobs"])

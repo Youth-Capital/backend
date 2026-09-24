@@ -93,8 +93,8 @@ PROMPT = """\
 Write {count} multiple-choice questions checking whether a learner understood \
 this lesson.
 
-Work only from the LESSON TEXT below. Every question and every option must be \
-answerable from that text alone — do not use outside knowledge, and do not ask \
+Work only from the lesson material you are given. Every question and every \
+option must be answerable from that text alone — do not use outside knowledge, and do not ask \
 about anything the text does not cover.
 
 Ask each question from a different angle. Use these, in order, one per \
@@ -108,17 +108,15 @@ silly. A learner who did not understand should be able to pick one.
 - Ask about what the lesson explains, not about trivia like word order.
 - `why` explains in one sentence why the correct option is correct, using the \
 lesson's own reasoning.
-- `quote` is the exact sentence from LESSON TEXT that makes the correct option \
+- `quote` is the exact sentence from the lesson material that makes the correct option \
 correct. Copy it verbatim — it is checked against the text, and a question \
 whose quote is not in the lesson is discarded.
 
-Write the questions, the options and the explanations in {language}.
-
-LESSON: {title}
-
-LESSON TEXT:
-{body}
+Write the questions, the options and the explanations in {language}.\
 """
+# Rules only. The lesson's title and text are the author's words and travel
+# as fenced material beside this, never formatted into it -- see
+# apps/ai/prompting.py.
 
 
 def facets_for(seed: str) -> list[str]:
@@ -224,9 +222,9 @@ def build_for(lesson, user, *, language: str = "Russian", attempt: int = 0) -> l
             count=QUESTION_COUNT,
             facets="\n".join(f"{i + 1}. {f}" for i, f in enumerate(facets)),
             language=language,
-            title=lesson.title,
-            body=body,
         ),
+        material=[("lesson title", lesson.title or ""), ("lesson", body)],
+        user=user,
         schema=QUIZ_SCHEMA,
         system=(
             "You write comprehension checks from a lesson's own text. You never "

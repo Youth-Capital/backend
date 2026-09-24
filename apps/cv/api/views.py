@@ -8,6 +8,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.permissions import IsOwnerOrAdmin
 from apps.common.exceptions import DomainError
 
 from ..models import CVDocument, PortfolioItem, PublicProfile
@@ -45,6 +46,11 @@ class CVDocumentSerializer(serializers.ModelSerializer):
 
 class PortfolioItemSerializer(serializers.ModelSerializer):
     skill_names = serializers.SerializerMethodField()
+    # Uploaded in, addressed out. The stored file has no public address at
+    # all, so what a client gets back is a link to the download view that
+    # checks who is asking.
+    file_url = serializers.SerializerMethodField()
+    cover_url = serializers.SerializerMethodField()
 
     class Meta:
         model = PortfolioItem
@@ -55,17 +61,33 @@ class PortfolioItemSerializer(serializers.ModelSerializer):
             "type",
             "url",
             "file",
+            "file_url",
             "cover",
+            "cover_url",
             "skills",
             "skill_names",
             "experience",
             "order",
             "is_public",
         ]
-        read_only_fields = ["id"]
+        read_only_fields = ["id", "file_url", "cover_url"]
+        extra_kwargs = {
+            "file": {"write_only": True, "required": False},
+            "cover": {"write_only": True, "required": False},
+        }
 
     def get_skill_names(self, item) -> list[str]:
         return [skill.name for skill in item.skills.all()]
+
+    def get_file_url(self, item) -> str | None:
+        from apps.common.api.files import file_url
+
+        return file_url("portfolio-item", item, self.context.get("request"))
+
+    def get_cover_url(self, item) -> str | None:
+        from apps.common.api.files import file_url
+
+        return file_url("portfolio-cover", item, self.context.get("request"))
 
 
 class PublicProfileSerializer(serializers.ModelSerializer):
@@ -77,7 +99,7 @@ class PublicProfileSerializer(serializers.ModelSerializer):
 
 @extend_schema(tags=["cv"])
 class CVViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     serializer_class = CVDocumentSerializer
 
     def get_queryset(self):
@@ -143,7 +165,7 @@ class CVViewSet(viewsets.ModelViewSet):
 
 @extend_schema(tags=["cv"])
 class PortfolioViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     serializer_class = PortfolioItemSerializer
 
     def get_queryset(self):

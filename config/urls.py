@@ -10,8 +10,16 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from apps.common.api.files import ProtectedFileView
+
 api_v1 = [
     path("health/", include("apps.common.api.urls")),
+    # The only route to a private upload. See apps/common/api/files.py.
+    path(
+        "files/<str:kind>/<uuid:pk>/",
+        ProtectedFileView.as_view(),
+        name="protected-file",
+    ),
     path("auth/", include("apps.accounts.api.urls")),
     path("taxonomy/", include("apps.taxonomy.api.urls")),
     path("me/", include("apps.profiles.api.urls")),

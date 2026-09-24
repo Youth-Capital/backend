@@ -26,6 +26,7 @@ from apps.assessment.models import (
 )
 from apps.common.enums import EvidenceSource, ModerationStatus, Role
 from apps.common.recompute import recompute_for_user
+from apps.common.seedguard import refuse_in_production
 from apps.cv.models import CVDocument, PortfolioItem
 from apps.experience.models import Experience, ExperienceSkill, ExperienceType
 from apps.jobs.models import (
@@ -200,8 +201,20 @@ class Command(BaseCommand):
             "--wipe", action="store_true", help="Delete existing demo accounts first."
         )
 
-    @transaction.atomic
     def handle(self, *args, **options):
+        # Outside the transaction, deliberately.
+        #
+        # `transaction.atomic` opens a database connection before the function
+        # it decorates runs its first line. With the guard inside the decorated
+        # method, a `seed_demo` aimed at production connected and began a
+        # transaction against the production database, and only then refused.
+        # It wrote nothing, but "nothing was written" is a weaker promise than
+        # "we never reached for it".
+        refuse_in_production("seed_demo")
+        self._seed(options)
+
+    @transaction.atomic
+    def _seed(self, options):
         random.seed(20261)  # reproducible demo data
 
         if not Skill.objects.exists():

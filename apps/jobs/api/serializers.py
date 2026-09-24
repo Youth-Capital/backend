@@ -412,6 +412,9 @@ class PlacementSerializer(serializers.ModelSerializer):
             "employer",
             "employer_name",
             "vacancy",
+            # The one writable link, and the only way a placement is made:
+            # everything else about who was hired is read off it server-side.
+            "application",
             "position",
             "start_date",
             "end_date",
@@ -422,7 +425,18 @@ class PlacementSerializer(serializers.ModelSerializer):
             "income_reported",
             "income_currency",
         ]
-        read_only_fields = ["id", "retention_30", "retention_90", "retention_180"]
+        # `student`, `employer` and `vacancy` are read-only because the
+        # server reads them off the application: a request body is not
+        # allowed to name who was hired, or by whom.
+        read_only_fields = [
+            "id",
+            "student",
+            "employer",
+            "vacancy",
+            "retention_30",
+            "retention_90",
+            "retention_180",
+        ]
 
     def get_student_name(self, placement) -> str:
         profile = getattr(placement.student, "student_profile", None)

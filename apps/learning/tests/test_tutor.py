@@ -233,7 +233,7 @@ def test_a_question_reaches_the_model_and_the_sources_come_back(
         def is_ready(self):
             return True
 
-        def reply(self, **kwargs):
+        def run_task(self, **kwargs):
             seen.update(kwargs)
             return "  An INNER JOIN keeps only matching rows.  "
 
@@ -246,6 +246,9 @@ def test_a_question_reaches_the_model_and_the_sources_come_back(
     assert result["available"] is True
     assert result["answer"] == "An INNER JOIN keeps only matching rows."
     assert result["grounded_on"] == ["lesson"]
-    # The lesson's own words were actually put in front of the model.
-    assert "INNER JOIN keeps only the rows" in seen["question"]
-    assert "what is an inner join?" in seen["question"]
+    # The lesson's own words were actually put in front of the model — as
+    # material, beside the question, and not inside the tutor's own rules.
+    material = " ".join(text for _, text in seen["material"])
+    assert "INNER JOIN keeps only the rows" in material
+    assert seen["question"] == "what is an inner join?"
+    assert "INNER JOIN keeps only the rows" not in seen["instructions"]

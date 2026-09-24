@@ -5,6 +5,18 @@ from .base import AUTHENTICATION_BACKENDS, env
 
 DEBUG = False
 
+# This is the test suite, and it says so out loud.
+#
+# The demo seeding commands refuse to run on anything that looks like a server
+# (apps/common/seedguard.py), and "looks like a server" is mostly `DEBUG` being
+# off — which is also true here. This flag is how the suite distinguishes
+# itself, and it is set in this module and nowhere else: no environment
+# variable can turn it on, so it cannot travel to a real deployment.
+TESTING = True
+
+# Tests never depend on a developer's .env for the signing key.
+SECRET_KEY = "test-settings-signing-key-used-only-by-the-automated-test-suite-4f8a"
+
 # Run against PostgreSQL when TEST_DATABASE_URL is set — that is the only way
 # to exercise the real constraints. Without it, fall back to SQLite so the
 # suite still runs on a machine with no database server. Constraint behaviour
@@ -32,6 +44,22 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+
+# Uploads go to a throwaway directory, never to the project's own media roots.
+#
+# Before this, every test that saved a file wrote it into backend/media or
+# backend/private-media for real, and nothing removed it: 79 files had piled up
+# in the private root from test runs alone, indistinguishable on disk from real
+# uploads. One directory per test process, deleted when the process exits.
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+_UPLOAD_SCRATCH = Path(tempfile.mkdtemp(prefix="yk-test-uploads-"))
+MEDIA_ROOT = _UPLOAD_SCRATCH / "media"
+PRIVATE_MEDIA_ROOT = _UPLOAD_SCRATCH / "private-media"
+atexit.register(shutil.rmtree, _UPLOAD_SCRATCH, ignore_errors=True)
 
 CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 

@@ -131,7 +131,19 @@ def check_text(text: str, *, user=None, request=None) -> SafetyVerdict:
     return SafetyVerdict(allowed=True)
 
 
-def _record(*, rule: str, action: str, severity: str, user=None, request=None) -> None:
+def record_event(
+    *, rule: str, action: str, severity: str, user=None, request=None, details=None
+) -> None:
+    """Put an intervention on the safety queue. Never raises."""
+    _record(
+        rule=rule, action=action, severity=severity, user=user, request=request,
+        details=details,
+    )
+
+
+def _record(
+    *, rule: str, action: str, severity: str, user=None, request=None, details=None
+) -> None:
     try:
         AISafetyEvent.objects.create(
             request=request,
@@ -139,7 +151,7 @@ def _record(*, rule: str, action: str, severity: str, user=None, request=None) -
             rule=rule,
             severity=severity,
             action=action,
-            details={},
+            details=details or {},
         )
     except Exception:  # pragma: no cover - never break the caller
         pass

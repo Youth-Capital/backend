@@ -7,6 +7,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from apps.common.enums import Language
+from apps.common import storage
 from apps.common.models import BaseModel
 from apps.common.validators import validate_image_upload
 from apps.taxonomy.models import Skill
@@ -117,9 +118,17 @@ class PortfolioItem(BaseModel):
         default=PortfolioItemType.PROJECT,
     )
     url = models.URLField(blank=True)
-    file = models.FileField(upload_to="portfolio/items/", blank=True, null=True)
+    # Somebody's work samples: private storage, and a name that gives away
+    # neither the uploader nor what they called the file.
+    file = models.FileField(
+        upload_to=storage.portfolio_item_path,
+        storage=storage.private_storage,
+        blank=True,
+        null=True,
+    )
     cover = models.ImageField(
-        upload_to="portfolio/covers/",
+        upload_to=storage.portfolio_cover_path,
+        storage=storage.private_storage,
         blank=True,
         null=True,
         validators=[validate_image_upload],

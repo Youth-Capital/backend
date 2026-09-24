@@ -52,32 +52,49 @@ CHUNK_CHARS = 700
 
 QUESTION_MAX_CHARS = 500
 
-TUTOR_PROMPT = """\
+#: The tutor's rules — instructions, and so the only text sent in `system`.
+#:
+#: The lesson title, the excerpts and the question used to be formatted into
+#: this same string and sent together as the user's message, which put a
+#: sentence an author planted in a transcript on exactly the same footing as
+#: the rules below. They now travel as separate, fenced data blocks; see
+#: apps/ai/prompting.py. Nothing in this string comes from a request.
+TUTOR_RULES = """\
 You are helping a learner who is part-way through a lesson and has stopped to \
 ask about something they did not follow.
 
-Answer ONLY from the LESSON EXCERPTS below. They are the entire course \
+Answer ONLY from the lesson material you are given. It is the entire course \
 material available to you.
 
-- If the excerpts answer the question, answer it plainly, in two to five \
+- If the material answers the question, answer it plainly, in two to five \
 sentences, using the same terms the lesson uses.
 - If the learner asks how something is used in practice, answer only with \
-examples the excerpts themselves give.
-- If the excerpts do not contain the answer, say so in one sentence and name \
-what the lesson does cover instead. Do not fill the gap from your own \
-knowledge, do not guess, and do not invent examples, figures or commands. The \
-learner will read this as what their course taught them.
+examples the material itself gives.
+- If the material does not contain the answer, say so in one sentence and \
+name what the lesson does cover instead. Do not fill the gap from your own \
+knowledge, do not guess, and do not invent examples, figures, commands or \
+links. The learner will read this as what their course taught them.
 
-Write in {language}. No preamble, no sign-off.
-
-LESSON: {title}
-
-QUESTION:
-{question}
-
-LESSON EXCERPTS:
-{excerpts}
+Write in {language}. No preamble, no sign-off.\
 """
+
+#: What the learner reads when a question is declined — asked for the
+#: instructions, or answered with something that could not be passed on.
+#: Keyed by the language name the view hands in.
+DECLINED = {
+    "Russian": (
+        "Я могу отвечать только на вопросы по материалу этого урока. "
+        "Спросите о том, что в нём непонятно."
+    ),
+    "Uzbek (latin script)": (
+        "Men faqat shu dars materiali bo'yicha savollarga javob bera olaman. "
+        "Darsda nima tushunarsiz bo'lsa, shuni so'rang."
+    ),
+    "English": (
+        "I can only answer questions about this lesson's material. "
+        "Ask about the part of it that was unclear."
+    ),
+}
 
 
 class Source:
@@ -260,9 +277,26 @@ def select_excerpts(
     return [chunk for _, chunk in sorted(chosen, key=lambda item: item[0])]
 
 
-def build_answer(lesson, question: str, *, language: str) -> dict:
+def _declined(language: str) -> dict:
+    """A plain answer that says what the tutor is for — not an error.
+
+    `declined` lets a caller tell this apart from a grounded answer without
+    changing what the learner sees.
+    """
+    return {
+        "available": True,
+        "answer": DECLINED.get(language, DECLINED["English"]),
+        "grounded_on": [],
+        "declined": True,
+    }
+
+
+def build_answer(lesson, question: str, *, language: str, user=None) -> dict:
     """Ask the model, grounded, and report what it was grounded on."""
+    from apps.ai import prompting
     from apps.ai.backends import get_chat_backend
+    from apps.ai.models import SafetyAction, SafetySeverity
+    from apps.ai.safety import record_event
 
     excerpts = select_excerpts(lesson, question)
     if not excerpts:
@@ -272,21 +306,29 @@ def build_answer(lesson, question: str, *, language: str) -> dict:
     if backend is None or not backend.is_ready():
         return {"available": False, "reason": "no_provider", "answer": ""}
 
-    rendered = "\n\n".join(
-        f"[{source.label}]\n{text}" for source, text in excerpts
-    )
-    prompt = TUTOR_PROMPT.format(
-        language=language,
-        title=lesson.title,
-        question=question,
-        excerpts=rendered,
-    )
+    # Asking for the instructions outright is answered here, without a model.
+    if prompting.looks_like_extraction_attempt(question):
+        record_event(
+            rule="prompt_extraction", action=SafetyAction.BLOCKED,
+            severity=SafetySeverity.LOW, user=user,
+        )
+        return _declined(language)
+
+    # The title is the author's words too, so it is material, not instruction.
+    material = [("lesson title", lesson.title or "")]
+    material += [(source.label, text) for source, text in excerpts]
 
     try:
-        #: Keyword-only, and `facts` is required — the same call recap.py
-        #: makes. There are no facts to pass here: the grounding is the
-        #: excerpts inside the prompt, not a database read.
-        answer = backend.reply(question=prompt, facts={}, history=[])
+        answer = backend.run_task(
+            instructions=TUTOR_RULES.format(language=language),
+            material=material,
+            question=question,
+            user=user,
+        )
+    except prompting.OutputRejected:
+        # The reply recited its instructions or carried a link the lesson never
+        # gave. Recorded on the safety queue by the backend; not shown.
+        return _declined(language)
     except Exception:  # pragma: no cover - provider failures are not the caller's problem
         logger.exception("Lesson tutor call failed for lesson %s", lesson.id)
         return {"available": False, "reason": "provider_failed", "answer": ""}

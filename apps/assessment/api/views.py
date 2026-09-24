@@ -9,9 +9,10 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.common.access import company_owned
 from apps.common.enums import ModerationStatus, Role
 from apps.common.exceptions import NotAllowed
-from apps.common.permissions import IsAdmin
+from apps.common.permissions import IsAdmin, IsEmployerOrAdmin
 
 from ..models import Question, Test, TestAttempt, TestSkill
 from ..services import (
@@ -53,10 +54,13 @@ class TestViewSet(viewsets.ModelViewSet):
         if user.is_admin:
             queryset = base
         elif user.role == Role.EMPLOYER:
-            company = getattr(user, "employer_profile", None)
+            # `company_owned` rather than `Q(employer=company)`: an employer
+            # whose company profile does not exist yet has None there, and
+            # `employer=None` would match every platform-owned test — including
+            # the unpublished ones the first clause deliberately excludes.
             queryset = base.filter(
                 Q(status=ModerationStatus.PUBLISHED)
-                | Q(employer=company)
+                | company_owned(user)
                 | Q(author=user)
             )
         else:
@@ -272,9 +276,25 @@ class AttemptViewSet(viewsets.ReadOnlyModelViewSet):
 
 @extend_schema(tags=["assessment"])
 class QuestionViewSet(viewsets.ModelViewSet):
-    """Question editing for test owners and admins only."""
+    """Question editing for test owners and admins only.
 
-    permission_classes = [IsAuthenticated]
+    This viewset serialises `is_correct`. That makes it an authoring tool and
+    nothing else, so the door is shut at the role: a learner has no reason to
+    reach it, and the cost of being wrong here is the whole verification story
+    the platform sells. Taking a test goes through `TestViewSet.start`, which
+    serialises the options without the key.
+
+    It said "owners and admins only" before and did not mean it. The scope was
+    `Q(test__employer=company)` with `company` read as
+    `getattr(user, "employer_profile", None)` — None for every learner — so the
+    clause degraded to `employer IS NULL`, which is exactly what a
+    platform-authored test looks like. One signed-in student could read, and
+    write, the answer key to all of them. Both halves are closed now: the role
+    check keeps learners out, and `company_owned` refuses to build a filter out
+    of a missing company.
+    """
+
+    permission_classes = [IsEmployerOrAdmin]
     serializer_class = QuestionAdminSerializer
 
     def get_queryset(self):
@@ -282,5 +302,29 @@ class QuestionViewSet(viewsets.ModelViewSet):
         base = Question.objects.select_related("test").prefetch_related("options")
         if user.is_admin:
             return base
+        return base.filter(
+            Q(test__author=user) | company_owned(user, "test__employer")
+        )
+
+    def _assert_can_edit(self, question: Question) -> None:
+        """Writes are checked against the object, not only the list.
+
+        `get_queryset` scopes what can be *found*; a create takes its test id
+        from the request body and never passes through it.
+        """
+        user = self.request.user
+        if user.is_admin:
+            return
+        test = question.test if isinstance(question, Question) else question
         company = getattr(user, "employer_profile", None)
-        return base.filter(Q(test__author=user) | Q(test__employer=company))
+        if test.author_id == user.id or (company and test.employer_id == company.id):
+            return
+        raise NotAllowed("You cannot edit this test.")
+
+    def perform_create(self, serializer):
+        self._assert_can_edit(serializer.validated_data["test"])
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._assert_can_edit(self.get_object())
+        serializer.save()

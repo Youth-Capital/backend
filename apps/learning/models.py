@@ -7,6 +7,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from apps.common.enums import Language, ModerationStatus
+from apps.common import storage
 from apps.common.models import BaseModel
 from apps.common.validators import validate_image_upload
 from apps.profiles.models import EmployerProfile
@@ -298,7 +299,12 @@ class Certificate(BaseModel):
     serial = models.CharField(max_length=32, unique=True)
     verification_code = models.CharField(max_length=32, unique=True)
     issued_at = models.DateTimeField(auto_now_add=True)
-    file = models.FileField(upload_to="certificates/", blank=True, null=True)
+    file = models.FileField(
+        upload_to=storage.certificate_path,
+        storage=storage.private_storage,
+        blank=True,
+        null=True,
+    )
 
     class Meta:
         db_table = "learning_certificate"
@@ -441,7 +447,14 @@ class CourseMaterial(BaseModel):
     title = models.CharField(max_length=255)
     description = models.CharField(max_length=500, blank=True)
 
-    file = models.FileField(upload_to="course-materials/", blank=True, null=True)
+    # Paid course content. Public storage here was a paywall with the gate
+    # left open: the file answered to anyone who knew the path.
+    file = models.FileField(
+        upload_to=storage.course_material_path,
+        storage=storage.private_storage,
+        blank=True,
+        null=True,
+    )
     url = models.URLField(blank=True)
 
     order = models.PositiveSmallIntegerField(default=0)

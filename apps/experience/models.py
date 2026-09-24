@@ -8,6 +8,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from apps.common.enums import VerificationStatus
+from apps.common import storage
 from apps.common.models import BaseModel
 from apps.taxonomy.models import Skill
 
@@ -138,7 +139,12 @@ class ProjectAsset(BaseModel):
     type = models.CharField(
         max_length=8, choices=AssetType.choices, default=AssetType.LINK
     )
-    file = models.FileField(upload_to="portfolio/", blank=True, null=True)
+    file = models.FileField(
+        upload_to=storage.experience_asset_path,
+        storage=storage.private_storage,
+        blank=True,
+        null=True,
+    )
     url = models.URLField(blank=True)
     caption = models.CharField(max_length=200, blank=True)
     order = models.PositiveSmallIntegerField(default=0)

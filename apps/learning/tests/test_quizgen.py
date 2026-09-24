@@ -180,9 +180,10 @@ class StubBackend:
         self.prompt = None
         self.schema = None
 
-    def structured(self, *, prompt, schema, system="", effort="medium"):
+    def structured(self, *, prompt, schema, system="", effort="medium", material=None, user=None):
         self.prompt = prompt
         self.schema = schema
+        self.material = material or []
         return self.payload
 
 
@@ -215,8 +216,11 @@ def test_the_generator_is_told_to_use_the_lesson_and_nothing_else(lesson, studen
 
     quizgen.build_for(lesson, student, language="English")
 
-    assert "Work only from the LESSON TEXT" in backend.prompt
-    assert LESSON_BODY in backend.prompt
+    assert "Work only from the lesson material" in backend.prompt
+    # The lesson reaches the model as fenced material beside the rules, never
+    # formatted into them: a lesson is the author's words, not ours.
+    assert LESSON_BODY not in backend.prompt
+    assert any(LESSON_BODY in text for _, text in backend.material)
     # The schema is what stops a string answer index reaching the grader.
     assert backend.schema["properties"]["questions"]["items"]["properties"]["answer"][
         "type"

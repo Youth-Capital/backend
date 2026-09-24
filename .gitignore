@@ -4,8 +4,15 @@
 .env
 .env.*
 !.env.example
+*.env
+.envrc
+secrets.json
+credentials.json
 *.pem
 *.key
+*.p12
+*.pfx
+id_rsa*
 
 # Python
 __pycache__/
@@ -21,7 +28,40 @@ htmlcov/
 
 # Django — dev.sqlite3 holds real accounts, password hashes and uploads.
 *.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Copies of the database, under any name anyone reaches for.
+#
+# `*.sqlite3` matches by extension, and the backups on this machine are named
+# dev.sqlite3.backup-<timestamp> — the name ends in the timestamp, so the rule
+# above never covered them. They hold the same real accounts and password
+# hashes as the live file, and both repositories are public.
+*.sqlite3.backup-*
+*.backup*
+*.bak
+*.dump
+*.sql
+
+# The same thing once it has been archived. Narrowed to archive extensions on
+# purpose: a bare `*backup*` would also hide a source file that happens to be
+# named after the subject, and a rule nobody can predict is a rule nobody
+# trusts.
+backups/
+*backup*.zip
+*backup*.gz
+*backup*.tar*
+*backup*.7z
+
+# Uploads, both roots.
+#
+# media/ is what the web server publishes; private-media/ is what it must
+# never publish — CVs, portfolios, certificates and paid course material.
+# Neither belongs in git, and private-media/ was missing here entirely, so
+# every file under it was one `git add -A` away from a public repository.
 media/
+private-media/
 staticfiles/
 logs/
 

@@ -7,6 +7,7 @@ driven from management commands, the seeder and tests.
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from datetime import date, timedelta
 
@@ -17,6 +18,7 @@ from django.utils import timezone
 from apps.common.enums import Role
 from apps.common.exceptions import DomainError, NotAllowed
 
+from .devices import describe
 from .models import (
     REQUIRED_CONSENTS,
     Consent,
@@ -24,10 +26,13 @@ from .models import (
     EmailVerification,
     GuardianLink,
     GuardianStatus,
+    LoginDevice,
     PasswordResetToken,
     User,
     calculate_age,
 )
+
+logger = logging.getLogger(__name__)
 
 #: Roles a person may self-register as. ADMIN is deliberately absent — it is
 #: granted from the Django admin, never claimed at the registration endpoint.
@@ -259,6 +264,193 @@ def change_password(user: User, current_password: str, new_password: str) -> Non
     user.set_password(new_password)
     user.save(update_fields=["password", "updated_at"])
     _revoke_all_sessions(user)
+
+
+#: New-device emails one account may receive in an hour. Every new device is
+#: still recorded and shown in the app; only the mail is capped. Somebody with
+#: the password could otherwise sign in from a stream of invented browsers and
+#: turn the alert into a mail bomb — and teach the owner to ignore it.
+NEW_DEVICE_EMAILS_PER_HOUR = 3
+
+SETTINGS_PATH_BY_ROLE = {
+    Role.STUDENT: "/student/settings",
+    Role.EMPLOYER: "/employer/settings",
+    Role.ADMIN: "/admin/settings",
+}
+
+# Written out per language rather than run through gettext: the project has no
+# compiled message catalogues, so a gettext call here would render English to
+# everybody while looking as though it had been translated.
+NEW_DEVICE_EMAIL = {
+    "uz": {
+        "subject": "hisobingizga yangi qurilmadan kirildi",
+        "greeting": "Assalomu alaykum!",
+        "lead": "Hisobingizga biz ilgari ko'rmagan qurilmadan kirildi:",
+        "device": "Qurilma",
+        "ip": "IP manzil",
+        "when": "Vaqt",
+        "unknown": "aniqlanmadi",
+        "ok": "Agar bu siz bo'lsangiz, hech narsa qilish shart emas.",
+        "not_ok": "Agar bu siz bo'lmasangiz, darhol parolni o'zgartiring:",
+    },
+    "ru": {
+        "subject": "вход с нового устройства",
+        "greeting": "Здравствуйте!",
+        "lead": "В ваш аккаунт вошли с устройства, которое мы раньше не видели:",
+        "device": "Устройство",
+        "ip": "IP-адрес",
+        "when": "Время",
+        "unknown": "не определено",
+        "ok": "Если это были вы, делать ничего не нужно.",
+        "not_ok": "Если это были не вы, сразу смените пароль:",
+    },
+    "en": {
+        "subject": "a new device signed in",
+        "greeting": "Hello,",
+        "lead": "Your account was signed in to from a device we have not seen before:",
+        "device": "Device",
+        "ip": "IP address",
+        "when": "Time",
+        "unknown": "not recognised",
+        "ok": "If this was you, there is nothing to do.",
+        "not_ok": "If it was not you, change your password now:",
+    },
+}
+
+
+def remember_login_device(user: User, request) -> tuple[LoginDevice, bool]:
+    """Record the device behind this sign-in, and say whether it is a new one.
+
+    "New" means two things together: this account has been used from somewhere
+    before, and this is not one of those places. A first-ever device is not new
+    — there is nothing to compare it against, and telling somebody that their
+    own first sign-in looks suspicious is how an alert stops being read.
+
+    This never raises. A sign-in that has already been authenticated must not
+    fail because the thing that writes a notification did.
+    """
+    from apps.common.context import get_client_ip
+
+    try:
+        user_agent = (request.META.get("HTTP_USER_AGENT") or "")[:400]
+        ip = get_client_ip(request) or None
+        shape = describe(user_agent)
+
+        seen_before = LoginDevice.objects.filter(user=user).exists()
+
+        device, created = LoginDevice.objects.get_or_create(
+            user=user,
+            fingerprint=shape.fingerprint,
+            defaults={
+                "browser": shape.browser,
+                "system": shape.system,
+                "kind": shape.kind,
+                "user_agent": user_agent,
+                "last_ip": ip,
+            },
+        )
+        if not created:
+            device.user_agent = user_agent or device.user_agent
+            device.last_ip = ip or device.last_ip
+            device.last_seen_at = timezone.now()
+            device.save(
+                update_fields=["user_agent", "last_ip", "last_seen_at", "updated_at"]
+            )
+
+        is_new = created and seen_before
+        if is_new:
+            _announce_new_device(user, shape, ip)
+        return device, is_new
+    except Exception:  # pragma: no cover - defence, not control flow
+        logger.exception("Could not record the login device for user=%s", user.id)
+        return None, False
+
+
+def _announce_new_device(user: User, shape, ip: str | None) -> None:
+    from apps.common.enums import Priority
+    from apps.notifications.models import Notification, NotificationType
+    from apps.notifications.services import notify
+
+    # Counted before this alert is written, so the cap is the number of emails
+    # already sent this hour rather than one fewer.
+    sent_this_hour = Notification.objects.filter(
+        user=user,
+        type=NotificationType.NEW_DEVICE_LOGIN,
+        created_at__gte=timezone.now() - timedelta(hours=1),
+    ).count()
+
+    notification = notify(
+        user=user,
+        type=NotificationType.NEW_DEVICE_LOGIN,
+        title_key="notifications.security.newDevice.title",
+        # Browser and system are proper nouns and are not translated, so the
+        # body can interpolate them directly. When the user agent said nothing
+        # recognisable there is a second phrasing rather than a sentence with
+        # two blanks in it.
+        body_key=(
+            "notifications.security.newDevice.body"
+            if shape.is_recognised
+            else "notifications.security.newDevice.bodyUnknown"
+        ),
+        payload={
+            "browser": shape.browser,
+            "system": shape.system,
+            "ip": ip or "",
+        },
+        action_url=SETTINGS_PATH_BY_ROLE.get(user.role, ""),
+        priority=Priority.HIGH,
+    )
+
+    # One switch for both channels. If somebody has turned this notification
+    # off, mailing them anyway ignores the same decision a second time.
+    if notification is None:
+        return
+    if sent_this_hour >= NEW_DEVICE_EMAILS_PER_HOUR:
+        logger.warning(
+            "New-device email suppressed for user=%s: %s already sent this hour.",
+            user.id,
+            sent_this_hour,
+        )
+        return
+    _send_new_device_email(user, shape, ip)
+
+
+def _send_new_device_email(user: User, shape, ip: str | None) -> None:
+    """Tell the account holder out of band.
+
+    In-app is not enough on its own for this one: the person who needs to read
+    it may not be the person holding the session that triggered it.
+    """
+    from django.core.mail import send_mail
+
+    copy = NEW_DEVICE_EMAIL.get(user.preferred_language, NEW_DEVICE_EMAIL["en"])
+    link = settings.FRONTEND_URL + SETTINGS_PATH_BY_ROLE.get(user.role, "")
+    when = timezone.localtime().strftime("%d.%m.%Y %H:%M")
+
+    body = "\n".join(
+        [
+            copy["greeting"],
+            "",
+            copy["lead"],
+            "",
+            f"  {copy['device']}: {shape.label() or copy['unknown']}",
+            f"  {copy['ip']}: {ip or copy['unknown']}",
+            f"  {copy['when']}: {when}",
+            "",
+            copy["ok"],
+            copy["not_ok"],
+            f"  {link}",
+            "",
+        ]
+    )
+
+    send_mail(
+        subject=f"{settings.PLATFORM_NAME} — {copy['subject']}",
+        message=body,
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@yoshlarkapitali.uz"),
+        recipient_list=[user.email],
+        fail_silently=True,
+    )
 
 
 def _revoke_all_sessions(user: User) -> None:

@@ -16,6 +16,7 @@ from apps.common.context import get_client_ip
 from apps.common.exceptions import DomainError
 
 from ..authentication import (
+    assert_not_cross_site,
     clear_refresh_cookie,
     issue_tokens,
     read_refresh_cookie,
@@ -30,6 +31,7 @@ from ..services import (
     create_password_reset,
     grant_consent,
     register_user,
+    remember_login_device,
     reset_password,
     revoke_consent,
 )
@@ -134,6 +136,12 @@ class LoginView(APIView):
         user.last_login_ip = get_client_ip(request)
         user.save(update_fields=["last_login_ip"])
 
+        # Notices a sign-in from a device this account has not been used from
+        # before, and tells the account holder. It swallows its own failures:
+        # the credentials were already accepted, and an alert that cannot be
+        # written is not a reason to refuse somebody entry to their account.
+        remember_login_device(user, request)
+
         log_action(action=AuditAction.LOGIN, obj=user, actor=user)
         return _auth_response(user)
 
@@ -149,6 +157,9 @@ class RefreshView(APIView):
 
     @extend_schema(request=None, responses={200: dict}, tags=["auth"])
     def post(self, request):
+        # Cookie-authenticated, so it must prove it is not a forged cross-site
+        # request before the cookie is so much as read.
+        assert_not_cross_site(request)
         raw = read_refresh_cookie(request)
         if not raw:
             raise DomainError(
@@ -187,6 +198,9 @@ class LogoutView(APIView):
 
     @extend_schema(request=None, responses={204: None}, tags=["auth"])
     def post(self, request):
+        # A forged logout is a denial of service: any page could sign the
+        # victim out of every tab. Same guard as refresh.
+        assert_not_cross_site(request)
         raw = read_refresh_cookie(request)
         if raw:
             try:

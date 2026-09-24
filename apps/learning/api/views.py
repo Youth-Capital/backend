@@ -11,9 +11,10 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.common.access import company_owned
 from apps.common.enums import ModerationStatus, Role
 from apps.common.exceptions import DomainError, NotAllowed
-from apps.common.permissions import IsAdmin
+from apps.common.permissions import IsAdmin, IsOwnerOrAdmin
 
 from ..models import Certificate, Course, CourseSkill, Enrollment, Lesson, LessonNote
 from ..services import (
@@ -230,7 +231,33 @@ class LessonViewSet(viewsets.ModelViewSet):
     serializer_class = LessonDetailSerializer
 
     def get_queryset(self):
-        return Lesson.objects.select_related("module__course")
+        """The same rule `can_open_lesson` applies, expressed as a filter.
+
+        `retrieve` has always asked `can_open_lesson`. `list` never did — it
+        inherited this queryset, and this queryset was every lesson on the
+        platform. Since the list serialiser is the detail serialiser, one
+        unauthenticated-in-spirit request returned the body, transcript, video
+        address and attachments of every lesson the platform hosts, paid or
+        draft. The guard existed; it was simply not on this path.
+
+        Writing it as a queryset rather than filtering in Python keeps
+        pagination honest and closes `get_object` at the same time, so a
+        lesson somebody may not read is not a lesson they can PATCH either.
+        """
+        user = self.request.user
+        base = Lesson.objects.select_related("module__course")
+        if user.is_admin:
+            return base
+
+        return base.filter(
+            # The shop window: free, and only while the course is on sale.
+            Q(is_free_preview=True, module__course__status=ModerationStatus.PUBLISHED)
+            # Theirs to begin with.
+            | Q(module__course__author=user)
+            | company_owned(user, "module__course__employer")
+            # Bought, or enrolled on.
+            | Q(module__course__enrollments__user=user)
+        ).distinct()
 
     def _assert_can_edit_course(self, course) -> None:
         user = self.request.user
@@ -266,7 +293,11 @@ class LessonViewSet(viewsets.ModelViewSet):
         lesson = self.get_object()
         if not can_open_lesson(request.user, lesson):
             raise NotAllowed("Enrol in the course to open this lesson.", code="not_enrolled")
-        return Response(LessonDetailSerializer(lesson).data)
+        # With the request in context: a material's link is signed for the
+        # person reading, and without it the link the page gets cannot open.
+        return Response(
+            LessonDetailSerializer(lesson, context=self.get_serializer_context()).data
+        )
 
 
     @extend_schema(request=None, responses={200: dict})
@@ -424,7 +455,9 @@ class LessonViewSet(viewsets.ModelViewSet):
             "uz": "Uzbek (latin script)",
         }.get(get_language() or "uz", "Uzbek (latin script)")
 
-        return Response(build_answer(lesson, question, language=language))
+        return Response(
+            build_answer(lesson, question, language=language, user=request.user)
+        )
 
 
     @extend_schema(request=None, responses={200: dict})
@@ -686,7 +719,7 @@ class MyNoteViewSet(viewsets.ModelViewSet):
     that a given note id exists.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     serializer_class = LessonNoteSerializer
     filterset_fields = ["course", "lesson"]
     search_fields = ["title", "content"]
@@ -767,6 +800,19 @@ class CourseModuleViewSet(CourseAuthoringMixin, viewsets.ModelViewSet):
         course_id = self.request.query_params.get("course")
         if course_id:
             queryset = queryset.filter(course_id=course_id)
+
+        # Writing here was guarded and reading was not, which left the shape of
+        # every unreleased course — its modules and their lesson titles —
+        # listable by any signed-in account. A syllabus is public for a course
+        # on sale and nobody else's business before that.
+        user = self.request.user
+        if not user.is_admin:
+            queryset = queryset.filter(
+                Q(course__status=ModerationStatus.PUBLISHED)
+                | Q(course__author=user)
+                | company_owned(user, "course__employer")
+                | Q(course__enrollments__user=user)
+            ).distinct()
         return queryset
 
     def perform_create(self, serializer):
@@ -810,6 +856,18 @@ class CourseMaterialViewSet(CourseAuthoringMixin, viewsets.ModelViewSet):
         lesson_id = self.request.query_params.get("lesson")
         if lesson_id:
             queryset = queryset.filter(lesson_id=lesson_id)
+
+        # `list` and `retrieve` below already ask `can_open_course`, and those
+        # checks stay. This is the same rule said a second time in the one place
+        # a new action would inherit it for free: the next `@action` added to
+        # this class should not have to remember.
+        user = self.request.user
+        if not user.is_admin:
+            queryset = queryset.filter(
+                Q(course__author=user)
+                | company_owned(user, "course__employer")
+                | Q(course__enrollments__user=user)
+            ).distinct()
         return queryset
 
     def list(self, request, *args, **kwargs):

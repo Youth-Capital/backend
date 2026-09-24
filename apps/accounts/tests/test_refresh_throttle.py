@@ -52,7 +52,8 @@ def declared_scopes() -> set[str]:
 #: prod.py refuses to import without real secrets, and rightly so. Placeholders
 #: let the throttle configuration be read without loosening that rule.
 PRODUCTION_PLACEHOLDERS = {
-    "DJANGO_SECRET_KEY": "test-only-not-a-real-key",
+    # Long and varied enough to pass the start-up key check, and plainly fake.
+    "DJANGO_SECRET_KEY": "test-only-fake-signing-key-9f3Kq2Lm8Vx4Rt7Zp1Nb6Hc5Wd0Ys3Ju",
     "EMAIL_HOST": "smtp.example.invalid",
     "EMAIL_HOST_USER": "noreply@example.invalid",
     "EMAIL_HOST_PASSWORD": "placeholder",

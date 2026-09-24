@@ -23,6 +23,7 @@ class NotificationType(models.TextChoices):
     INTERVIEW_SCHEDULED = "INTERVIEW_SCHEDULED", _("Interview scheduled")
     MODERATION_RESULT = "MODERATION_RESULT", _("Moderation decision")
     REVIEW_REQUEST = "REVIEW_REQUEST", _("Asked for feedback on the platform")
+    NEW_DEVICE_LOGIN = "NEW_DEVICE_LOGIN", _("Signed in from a new device")
     SYSTEM = "SYSTEM", _("System message")
 
 

@@ -21,9 +21,10 @@ from abc import ABC, abstractmethod
 
 from django.utils.translation import get_language
 
-logger = logging.getLogger(__name__)
+from . import prompting
+from .persona import LANGUAGE_NAMES, TASK_BASE, build_system_prompt
 
-from .persona import LANGUAGE_NAMES, build_system_prompt
+logger = logging.getLogger(__name__)
 
 
 class ChatBackend(ABC):
@@ -61,6 +62,18 @@ class ChatBackend(ABC):
         to invent one.
         """
 
+    def run_task(
+        self,
+        *,
+        instructions: str,
+        material: list[tuple[str, str]],
+        question: str = "",
+        user=None,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Work over course material with `instructions`; see AnthropicChatBackend."""
+        raise NotImplementedError(f"{self.name} cannot run course-material tasks.")
+
     def structured(
         self,
         *,
@@ -68,6 +81,8 @@ class ChatBackend(ABC):
         schema: dict,
         system: str = "",
         effort: str = "medium",
+        material: list[tuple[str, str]] | None = None,
+        user=None,
     ) -> dict:
         """Return a dict the API guaranteed matches `schema`.
 
@@ -120,53 +135,57 @@ class AnthropicChatBackend(ChatBackend):
     def _language() -> str:
         return LANGUAGE_NAMES.get(get_language() or "uz", LANGUAGE_NAMES["uz"])
 
-    def reply(
+    # -- the one place a request is assembled and a reply is vetted ----------
+    def _history(self, history: list[dict]) -> list[dict]:
+        """Earlier turns, defused, starting on a user turn.
+
+        Earlier turns are untrusted twice over: the person's messages, and the
+        model's own earlier replies, which an injection may already have shaped.
+        Both are defused so neither can carry a fence into this request.
+        """
+        turns = [
+            {"role": turn["role"], "content": prompting.neutralize(str(turn["content"]))}
+            for turn in history[-8:]
+            if turn.get("content")
+        ]
+        while turns and turns[0]["role"] != "user":
+            turns.pop(0)
+        return turns
+
+    def _send(
         self,
         *,
-        question: str,
-        facts: dict,
-        history: list[dict],
-        user=None,
-        preferences: dict | None = None,
+        system: str,
+        blocks: list[str],
+        history: list[dict] | None = None,
+        max_tokens: int | None = None,
+        effort: str = "low",
+        output_format: dict | None = None,
     ) -> str:
         client = self._client()
-        language = self._language()
-
-        messages = list(history[-8:])
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    f"FACTS (read from the database, authoritative):\n"
-                    f"{json.dumps(facts, ensure_ascii=False, indent=2, default=str)}\n\n"
-                    f"QUESTION: {question}"
-                ),
-            }
-        )
+        output_config = {"effort": effort}
+        if output_format is not None:
+            output_config["format"] = output_format
 
         response = client.messages.create(
             model=self.model,
-            max_tokens=self.max_tokens,
-            # Composed for this person: role, where their account actually is,
-            # and any preference they set. See apps/ai/persona.py.
-            system=build_system_prompt(
-                user, language=language, preferences=preferences
-            ),
-            # Adaptive rather than off. The work here is small -- phrase facts
-            # somebody else read -- so effort stays low: this is the cheap,
-            # high-volume path, and the quality that matters is coming from
-            # the facts, not from deliberation about them.
+            max_tokens=max_tokens or self.max_tokens,
+            system=system,
             thinking={"type": "adaptive"},
-            output_config={"effort": "low"},
-            messages=messages,
+            output_config=output_config,
+            messages=[
+                *(history or []),
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": block} for block in blocks],
+                },
+            ],
         )
 
         if response.stop_reason == "refusal":
             # Deliberately not routed to another model. The rule-based answer
             # the caller already has is grounded in this person's own database
-            # rows, which is a better answer than a second model's guess --
-            # the fallback here is *more* correct than the thing it replaces,
-            # which is not usually true of a refusal fallback.
+            # rows, which is a better answer than a second model's guess.
             raise RuntimeError("Model declined to answer.")
 
         text = "".join(
@@ -176,6 +195,104 @@ class AnthropicChatBackend(ChatBackend):
             raise RuntimeError("Model returned no text.")
         return text
 
+    def _vet(self, text: str, *, system: str, envelope, sources: list[str], user=None) -> str:
+        """Refuse a reply that recites its instructions or invents a link.
+
+        Runs on every reply, whoever asked for it, because the output side is
+        the one place the platform can check what the model actually did rather
+        than what it was asked to do.
+        """
+        from .models import SafetyAction, SafetySeverity
+        from .safety import record_event
+
+        if prompting.leaks_instructions(text, system, envelope.canary):
+            record_event(
+                rule="prompt_leak", action=SafetyAction.BLOCKED,
+                severity=SafetySeverity.HIGH, user=user,
+            )
+            raise prompting.OutputRejected("prompt_leak")
+
+        links = prompting.unsourced_links(text, *sources)
+        if links:
+            record_event(
+                rule="unsourced_link", action=SafetyAction.BLOCKED,
+                severity=SafetySeverity.MEDIUM, user=user,
+                details={"links": links[:5]},
+            )
+            raise prompting.OutputRejected("unsourced_link")
+        return text
+
+    # -- the three kinds of request -------------------------------------------
+    def reply(
+        self,
+        *,
+        question: str,
+        facts: dict,
+        history: list[dict],
+        user=None,
+        preferences: dict | None = None,
+    ) -> str:
+        """Phrase database facts in answer to somebody's question.
+
+        The facts and the question travel as two fenced blocks, never as one
+        string. They used to be one — `FACTS (...authoritative): ... QUESTION: ...`
+        — and a question that brought its own FACTS paragraph was
+        indistinguishable from the real one.
+        """
+        envelope = prompting.Envelope()
+        system = prompting.compose(
+            # Composed for this person: role, where their account actually is,
+            # and any preference they set. See apps/ai/persona.py.
+            build_system_prompt(user, language=self._language(), preferences=preferences),
+            prompting.protocol(envelope.nonce, facts=True, question=True),
+            prompting.confidentiality(envelope.canary),
+        )
+        text = self._send(
+            system=system,
+            blocks=[
+                prompting.facts_block(facts, envelope.nonce),
+                prompting.question_block(question, envelope.nonce),
+            ],
+            history=self._history(history),
+        )
+        return self._vet(
+            text, system=system, envelope=envelope,
+            sources=[prompting.json_fenced(facts)], user=user,
+        )
+
+    def run_task(
+        self,
+        *,
+        instructions: str,
+        material: list[tuple[str, str]],
+        question: str = "",
+        user=None,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Work over course text somebody else wrote: answer, summarise, quiz.
+
+        The task's rules go into `system`; the course text goes into the user
+        turn, one fenced block per source. That split is the whole defence
+        against a lesson that tries to give orders: the author can write into
+        the second channel and never into the first.
+        """
+        envelope = prompting.Envelope()
+        system = prompting.compose(
+            TASK_BASE,
+            instructions,
+            prompting.protocol(envelope.nonce, material=True, question=bool(question)),
+            prompting.confidentiality(envelope.canary),
+        )
+        blocks = [prompting.material_block(label, text, envelope.nonce) for label, text in material]
+        if question:
+            blocks.append(prompting.question_block(question, envelope.nonce))
+
+        text = self._send(system=system, blocks=blocks, max_tokens=max_tokens)
+        return self._vet(
+            text, system=system, envelope=envelope,
+            sources=[body for _, body in material], user=user,
+        )
+
     def structured(
         self,
         *,
@@ -183,35 +300,52 @@ class AnthropicChatBackend(ChatBackend):
         schema: dict,
         system: str = "",
         effort: str = "medium",
+        material: list[tuple[str, str]] | None = None,
+        user=None,
     ) -> dict:
+        """JSON the API guarantees matches `schema`.
+
+        With `material`, the instructions (`prompt`) move into `system` and the
+        course text is fenced in the user turn, exactly as for `run_task` — a
+        quiz written from a lesson is as open to a planted instruction as an
+        answer is.
+        """
         import json
 
-        client = self._client()
-        response = client.messages.create(
-            model=self.model,
+        envelope = prompting.Envelope()
+        if material:
+            composed = prompting.compose(
+                TASK_BASE,
+                system,
+                prompt,
+                prompting.protocol(envelope.nonce, material=True),
+                prompting.confidentiality(envelope.canary),
+            )
+            blocks = [prompting.material_block(label, text, envelope.nonce) for label, text in material]
+            blocks.append("Write the requested output now, from the material above.")
+        else:
+            composed = prompting.compose(
+                system or "Return only the requested JSON.",
+                prompting.confidentiality(envelope.canary),
+            )
+            blocks = [prompt]
+
+        text = self._send(
+            system=composed,
+            blocks=blocks,
             # Generous, because the caller is asking for a whole quiz and a
             # response cut off at the cap is a half-written question rather
             # than a short one. Well under the streaming threshold.
             max_tokens=8000,
-            system=system or "Return only the requested JSON.",
-            thinking={"type": "adaptive"},
-            output_config={
-                "effort": effort,
-                "format": {"type": "json_schema", "schema": schema},
-            },
-            messages=[{"role": "user", "content": prompt}],
+            effort=effort,
+            output_format={"type": "json_schema", "schema": schema},
         )
-
-        if response.stop_reason == "refusal":
-            raise RuntimeError("Model declined to produce the requested output.")
-
-        # The format guarantee means the first text block is valid JSON
-        # matching the schema -- no regex, no "find the first {".
-        text = next(
-            (block.text for block in response.content if block.type == "text"), ""
+        # The format guarantee means the text is valid JSON matching the
+        # schema -- no regex, no "find the first {".
+        self._vet(
+            text, system=composed, envelope=envelope,
+            sources=[body for _, body in (material or [])] + [prompt], user=user,
         )
-        if not text:
-            raise RuntimeError("Model returned no structured output.")
         return json.loads(text)
 
 

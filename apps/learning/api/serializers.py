@@ -350,11 +350,15 @@ class CourseMaterialSerializer(serializers.ModelSerializer):
         extra_kwargs = {"file": {"write_only": True, "required": False}}
 
     def get_file_url(self, material) -> str | None:
-        if not material.file:
-            return None
-        request = self.context.get("request")
-        url = material.file.url
-        return request.build_absolute_uri(url) if request else url
+        """A link to the download view, not to the file.
+
+        Course material is paid content. It used to be served straight out of
+        the public media directory, which made the paywall a suggestion: the
+        address answered to anybody who had it, signed in or not.
+        """
+        from apps.common.api.files import file_url
+
+        return file_url("course-material", material, self.context.get("request"))
 
     def get_video(self, material) -> dict | None:
         if material.kind != "VIDEO":

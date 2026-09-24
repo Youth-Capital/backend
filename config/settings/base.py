@@ -35,7 +35,12 @@ env_file = BASE_DIR / ".env"
 if env_file.exists():
     env.read_env(str(env_file))
 
-SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-only-insecure-key-change-me")
+# No usable fallback. This used to default to a placeholder string that is in
+# this repository, and it signs every session: a server started without the
+# variable accepted JWTs anybody could mint. Development and test settings
+# supply their own throwaway key; production refuses to start without a
+# strong one (config/settings/prod.py, apps/common/checks.py).
+SECRET_KEY = env("DJANGO_SECRET_KEY", default="")
 DEBUG = env("DJANGO_DEBUG")
 ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
 
@@ -239,7 +244,10 @@ SIMPLE_JWT = {
     "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,
     "ALGORITHM": "HS256",
-    "SIGNING_KEY": SECRET_KEY,
+    # SIGNING_KEY is deliberately not set: simplejwt then reads
+    # settings.SECRET_KEY once all settings are loaded. Copying it here froze
+    # whatever this module saw, so a key set later by dev or test settings
+    # would not have been the one signing tokens.
     "AUTH_HEADER_TYPES": ("Bearer",),
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
@@ -271,6 +279,11 @@ SPECTACULAR_SETTINGS = {
     ),
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    # The schema, Swagger and Redoc are for the people who run the platform.
+    # drf-spectacular serves all three with AllowAny unless told otherwise, so
+    # the full map of the API — admin routes included — was readable by
+    # anybody, signed in or not.
+    "SERVE_PERMISSIONS": ["apps.common.permissions.IsAdmin"],
     "COMPONENT_SPLIT_REQUEST": True,
     "SCHEMA_PATH_PREFIX": "/api/v1",
     "ENUM_NAME_OVERRIDES": {
@@ -303,6 +316,15 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# A second root, deliberately not served by anything.
+#
+# MEDIA_ROOT is a directory the web server publishes, which is right for a logo
+# and wrong for a CV: a file there is readable by anyone who knows the path, and
+# the platform's permission checks never run because the request never reaches
+# the platform. Private uploads live here instead and are only reachable through
+# the download view in apps/common/api/files.py, which asks who is asking.
+PRIVATE_MEDIA_ROOT = BASE_DIR / "private-media"
 
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024

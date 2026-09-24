@@ -5,9 +5,34 @@ from .base import BASE_DIR, MIDDLEWARE, env
 
 DEBUG = False
 
-# Fail fast: a production deploy must supply a real secret key.
+# Fail fast: a production deploy must supply a real secret key, and a real one
+# means long and random, not a placeholder that happens to be non-empty.
 SECRET_KEY = env("DJANGO_SECRET_KEY")
+
+from apps.common.checks import MIN_LENGTH, is_weak_secret_key  # noqa: E402
+
+if is_weak_secret_key(SECRET_KEY):
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured(
+        "SECRET_KEY is too short or a known placeholder. Set DJANGO_SECRET_KEY to at "
+        f"least {MIN_LENGTH} random characters."
+    )
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS")
+
+# Never in production, whatever the environment says. With this on, the manual
+# payment provider settles every checkout without money moving, so one stray
+# line in a server's .env would make every paid plan free. Refusing to start is
+# the loud version of that mistake; apps/billing/checks.py covers any other
+# settings module that runs with DEBUG off.
+if env.bool("BILLING_MANUAL_AUTO_CONFIRM", default=False):
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured(
+        "BILLING_MANUAL_AUTO_CONFIRM must not be enabled in production: it confirms "
+        "every manual payment without any money moving."
+    )
+BILLING_MANUAL_AUTO_CONFIRM = False
 
 # --- Transport security -------------------------------------------------
 SECURE_SSL_REDIRECT = True

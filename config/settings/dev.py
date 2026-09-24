@@ -4,6 +4,11 @@ from .base import *  # noqa: F403
 from .base import INSTALLED_APPS, env
 
 DEBUG = True
+
+# A throwaway key when none is configured, so a fresh checkout runs. It is
+# marked insecure by its prefix, and apps/common/checks.py refuses it on any
+# server where DEBUG is off.
+SECRET_KEY = SECRET_KEY or "django-insecure-local-development-only-not-for-any-server"  # noqa: F405
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"]
 
 INSTALLED_APPS = INSTALLED_APPS + ["django_extensions"]

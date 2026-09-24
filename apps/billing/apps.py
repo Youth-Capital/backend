@@ -8,4 +8,4 @@ class BillingConfig(AppConfig):
 
     def ready(self) -> None:
         # Registers the free-plan-on-registration hook.
-        from . import signals  # noqa: F401
+        from . import checks, signals  # noqa: F401

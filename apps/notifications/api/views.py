@@ -1,3 +1,4 @@
+from apps.common.permissions import IsOwnerOrAdmin
 """Notification centre endpoints."""
 
 from drf_spectacular.utils import extend_schema
@@ -39,7 +40,7 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
 
 @extend_schema(tags=["notifications"])
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     serializer_class = NotificationSerializer
     filterset_fields = ["type", "is_read", "priority"]
 
@@ -60,7 +61,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
 @extend_schema(tags=["notifications"])
 class NotificationPreferenceViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     serializer_class = NotificationPreferenceSerializer
 
     def get_queryset(self):

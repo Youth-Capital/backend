@@ -32,22 +32,21 @@ RECAP_PROMPT = """\
 You are writing a revision recap for a learner who has already watched this \
 lesson and wants to remember what was in it.
 
-Work only from the LESSON TEXT below. Do not add facts that are not in it, do \
-not invent examples, and do not fill gaps from your own knowledge — the reader \
-will trust this as a record of what they were taught.
+Work only from the lesson material you are given. Do not add facts that are \
+not in it, do not invent examples, and do not fill gaps from your own \
+knowledge — the reader will trust this as a record of what they were taught.
 
 Produce:
 1. Two or three sentences saying what the lesson was about.
 2. Between three and six key points, each one line.
 3. If the text names specific terms, commands or figures, keep them exact.
 
-Write in {language}. No preamble, no closing remark.
-
-LESSON: {title}
-
-LESSON TEXT:
-{body}
+Write in {language}. No preamble, no closing remark.\
 """
+# The lesson's title and text used to be formatted into the prompt above and
+# sent as the user's message together with it. They are the author's words,
+# so they now travel as fenced material and this string holds rules only —
+# see apps/ai/prompting.py.
 
 
 def recap_source(lesson) -> str:
@@ -101,12 +100,9 @@ def build_recap(lesson, *, language: str = "Russian") -> str:
     # what it is about.
     body = source[:24_000]
 
-    return backend.reply(
-        question=RECAP_PROMPT.format(
-            language=language, title=lesson.title, body=body
-        ),
-        facts={},
-        history=[],
+    return backend.run_task(
+        instructions=RECAP_PROMPT.format(language=language),
+        material=[("lesson title", lesson.title or ""), ("lesson", body)],
     ).strip()
 
 
@@ -126,9 +122,9 @@ CHECK_PROMPT = """\
 Write {count} multiple-choice questions checking whether a learner understood \
 this lesson.
 
-Work only from the LESSON TEXT below. Every question and every option must be \
-answerable from that text alone — do not use outside knowledge, and do not ask \
-about anything the text does not cover.
+Work only from the lesson material you are given. Every question and every \
+option must be answerable from that text alone — do not use outside knowledge, \
+and do not ask about anything the text does not cover.
 
 Rules:
 - Four options each, exactly one correct.
@@ -142,12 +138,7 @@ Write the questions, the options and the explanations in {language}.
 
 Return JSON only, no prose around it, in exactly this shape:
 {{"questions": [{{"question": "...", "options": ["...", "...", "...", "..."], \
-"answer": 0, "why": "..."}}]}}
-
-LESSON: {title}
-
-LESSON TEXT:
-{body}
+"answer": 0, "why": "..."}}]}}\
 """
 
 
@@ -165,15 +156,12 @@ def build_check(lesson, *, language: str = "Russian") -> list[dict]:
     if backend is None:
         raise RuntimeError("No model is configured.")
 
-    raw = backend.reply(
-        question=CHECK_PROMPT.format(
-            count=CHECK_QUESTION_COUNT,
-            language=language,
-            title=lesson.title,
-            body=recap_source(lesson)[:24_000],
-        ),
-        facts={},
-        history=[],
+    raw = backend.run_task(
+        instructions=CHECK_PROMPT.format(count=CHECK_QUESTION_COUNT, language=language),
+        material=[
+            ("lesson title", lesson.title or ""),
+            ("lesson", recap_source(lesson)[:24_000]),
+        ],
     )
 
     return _parse_questions(raw)

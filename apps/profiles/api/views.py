@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 
 from apps.common.enums import Role
 from apps.common.exceptions import DomainError, NotAllowed
-from apps.common.permissions import IsStudent
+from apps.common.permissions import IsOwnerOrAdmin, IsStudent
 from apps.common.recompute import schedule_recompute
 from apps.taxonomy.models import Profession, Skill
 
@@ -146,7 +146,7 @@ class OnboardingView(APIView):
 class MySkillsViewSet(viewsets.ModelViewSet):
     """The caller's own skills. Never anybody else's."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     serializer_class = UserSkillSerializer
     filterset_fields = ["status", "skill__category"]
     ordering_fields = ["proficiency", "last_evidence_at"]
@@ -224,7 +224,7 @@ class MySkillsViewSet(viewsets.ModelViewSet):
 
 @extend_schema(tags=["profile"])
 class MyEducationViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     serializer_class = EducationSerializer
 
     def get_queryset(self):

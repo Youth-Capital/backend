@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.exceptions import DomainError
-from apps.common.permissions import IsStudent
+from apps.common.permissions import IsOwnerOrAdmin, IsStudent
 from apps.taxonomy.models import Profession
 
 from ..models import DevelopmentPlan, Goal, Task
@@ -29,7 +29,7 @@ from .serializers import (
 
 @extend_schema(tags=["idp"])
 class GoalViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsStudent]
+    permission_classes = [IsAuthenticated, IsStudent, IsOwnerOrAdmin]
     serializer_class = GoalSerializer
     filterset_fields = ["horizon", "status"]
 
@@ -49,7 +49,7 @@ class DevelopmentPlanViewSet(viewsets.ReadOnlyModelViewSet):
     """Plans are generated or activated, never created by raw POST — the
     generator is what makes them grounded in a real skill gap."""
 
-    permission_classes = [IsAuthenticated, IsStudent]
+    permission_classes = [IsAuthenticated, IsStudent, IsOwnerOrAdmin]
     filterset_fields = ["status"]
 
     def get_queryset(self):
@@ -111,7 +111,7 @@ class DevelopmentPlanViewSet(viewsets.ReadOnlyModelViewSet):
 
 @extend_schema(tags=["idp"])
 class TaskViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsStudent]
+    permission_classes = [IsAuthenticated, IsStudent, IsOwnerOrAdmin]
     serializer_class = TaskSerializer
     filterset_fields = ["status", "type", "priority", "plan", "milestone"]
     ordering_fields = ["due_date", "priority", "created_at"]

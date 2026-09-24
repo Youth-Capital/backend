@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from apps.common.access import company_owned
 from apps.common.exceptions import DomainError, NotAllowed
 from apps.common.enums import Role
 from apps.common.permissions import IsAdmin, IsStudent
@@ -241,9 +242,12 @@ class CapabilityView(APIView):
             raise DomainError("Unknown user.", code="not_found")
 
         if request.user.role == Role.EMPLOYER:
-            company = getattr(request.user, "employer_profile", None)
+            # `company_owned` rather than a bare `employer=company`: this one
+            # already failed closed because a vacancy's employer is never null,
+            # but the spelling is the one that inverted elsewhere, so it does
+            # not stay in the codebase as an example to copy.
             reachable = MatchResult.objects.filter(
-                student=subject, vacancy__employer=company
+                company_owned(request.user, "vacancy__employer"), student=subject
             ).exists()
             if not reachable:
                 raise NotAllowed(
@@ -574,21 +578,44 @@ def _phrase_with_model(user, thread, question: str, facts: dict) -> str:
     is already prepared and correct, so a model outage should cost fluency, not
     the answer.
     """
+    from .. import prompting
     from ..backends import get_chat_backend
-    from ..models import ChatAuthor, ChatMessage, preferences_for
-    from ..safety import check_text
+    from ..models import ChatAuthor, ChatMessage, SafetyAction, SafetySeverity, preferences_for
+    from ..safety import check_text, record_event
 
     backend = get_chat_backend()
     if backend is None:
         return ""
 
+    # Asking for the instructions outright never reaches the model. The person
+    # still gets the rule-based answer, which is built from their own rows and
+    # has no instructions to give away.
+    if prompting.looks_like_extraction_attempt(question):
+        record_event(
+            rule="prompt_extraction", action=SafetyAction.BLOCKED,
+            severity=SafetySeverity.LOW, user=user,
+        )
+        return ""
+
+    # The latest turns, oldest first. Three things this used to get wrong:
+    # it took the *first* twenty messages of a long thread rather than the
+    # last; it replayed messages the safety filter had refused, so a blocked
+    # text came back as context on the very next turn; and it included the
+    # question being answered, which the backend then sent a second time.
+    recent = list(
+        ChatMessage.objects.filter(thread=thread, blocked=False)
+        .exclude(text="")
+        .order_by("-created_at")[:21]
+    )
+    recent.reverse()
+    if recent and recent[-1].author == ChatAuthor.USER and recent[-1].text == question:
+        recent.pop()
     history = [
         {
             "role": "user" if m.author == ChatAuthor.USER else "assistant",
             "content": m.text,
         }
-        for m in ChatMessage.objects.filter(thread=thread).order_by("created_at")[:20]
-        if m.text
+        for m in recent[-20:]
     ]
 
     try:
@@ -602,6 +629,10 @@ def _phrase_with_model(user, thread, question: str, facts: dict) -> str:
             user=user,
             preferences=preferences_for(user),
         )
+    except prompting.OutputRejected:
+        # Already recorded on the safety queue by the backend. The reader gets
+        # the rule-based answer, which cannot have been talked into anything.
+        return ""
     except Exception:
         logger.exception("Chat backend failed; falling back to the rule-based answer.")
         return ""

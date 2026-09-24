@@ -123,8 +123,19 @@ def can_open_course(user, course: Course) -> bool:
 
 
 def can_open_lesson(user, lesson: Lesson) -> bool:
-    """As above, plus the free preview a course offers to everyone."""
-    return lesson.is_free_preview or can_open_course(user, lesson.module.course)
+    """As above, plus the free preview a course offers to everyone.
+
+    The preview only counts while the course is actually on sale. A preview is
+    a shop window, and a course still in draft has no window: before this, a
+    lesson marked `is_free_preview` on an unpublished course was readable by
+    any signed-in account, which handed out an employer's unreleased material
+    to anyone who could guess the id. Owners, authors and admins are unaffected
+    — they reach their own drafts through `can_open_course` below.
+    """
+    course = lesson.module.course
+    if lesson.is_free_preview and course.is_published:
+        return True
+    return can_open_course(user, course)
 
 
 # ---------------------------------------------------------------------------

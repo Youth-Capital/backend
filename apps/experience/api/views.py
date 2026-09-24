@@ -1,3 +1,4 @@
+from apps.common.permissions import IsOwnerOrAdmin
 """Experience endpoints (prompt §9)."""
 
 from drf_spectacular.utils import extend_schema
@@ -14,9 +15,18 @@ from ..models import Experience, ExperienceSkill, ProjectAsset
 
 
 class ProjectAssetSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+
     class Meta:
         model = ProjectAsset
-        fields = ["id", "type", "file", "url", "caption", "order"]
+        fields = ["id", "type", "file", "file_url", "url", "caption", "order"]
+        read_only_fields = ["id", "file_url"]
+        extra_kwargs = {"file": {"write_only": True, "required": False}}
+
+    def get_file_url(self, asset) -> str | None:
+        from apps.common.api.files import file_url
+
+        return file_url("experience-asset", asset, self.context.get("request"))
 
 
 class ExperienceSkillSerializer(serializers.ModelSerializer):
@@ -70,7 +80,7 @@ class ExperienceSerializer(serializers.ModelSerializer):
 
 @extend_schema(tags=["experience"])
 class ExperienceViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     serializer_class = ExperienceSerializer
     filterset_fields = ["type", "is_current"]
 

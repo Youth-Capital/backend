@@ -255,6 +255,51 @@ class PasswordResetToken(BaseModel):
         return self.used_at is None and self.expires_at > timezone.now()
 
 
+class LoginDevice(BaseModel):
+    """One kind of device an account has been signed in from.
+
+    The row exists so that the *second* sign-in from somewhere new can be told
+    apart from the first sign-in ever. Without a record of what is already
+    known, every login looks new and the alert is noise.
+
+    It is a device shape, not a session: signing in twice from the same phone
+    updates this row rather than adding one, so the list stays the length of
+    "places this account is used" instead of growing with every login.
+    """
+
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="login_devices"
+    )
+    # sha256 of browser+system+kind — see accounts/devices.py for what is
+    # deliberately left out of it.
+    fingerprint = models.CharField(max_length=64)
+
+    browser = models.CharField(max_length=40, blank=True)
+    system = models.CharField(max_length=40, blank=True)
+    kind = models.CharField(max_length=16, blank=True)
+
+    # Kept whole as well, because the parsed fields are a best effort and the
+    # original string is what makes a support conversation possible later.
+    user_agent = models.CharField(max_length=400, blank=True)
+
+    last_ip = models.GenericIPAddressField(null=True, blank=True)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "accounts_login_device"
+        ordering = ["-last_seen_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "fingerprint"], name="uniq_login_device_user_print"
+            )
+        ]
+        indexes = [models.Index(fields=["user", "-last_seen_at"])]
+
+    def __str__(self) -> str:
+        shape = " · ".join(part for part in (self.browser, self.system) if part)
+        return f"{self.user_id} · {shape or 'unrecognised'}"
+
+
 def calculate_age(birth_date: date | None, on: date | None = None) -> int | None:
     if not birth_date:
         return None

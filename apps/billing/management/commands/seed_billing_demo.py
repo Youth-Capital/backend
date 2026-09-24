@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.common.enums import Role
+from apps.common.seedguard import refuse_in_production
 
 from ...enums import Feature, PaymentStatus
 from ...models import FeatureUsage, Payment, Plan
@@ -51,8 +52,14 @@ STUDENT_PREMIUM_USAGE = {
 class Command(BaseCommand):
     help = "Assign demo accounts to plans and fabricate believable usage."
 
-    @transaction.atomic
     def handle(self, *args, **options):
+        # Outside the transaction: `transaction.atomic` would open a connection
+        # to the production database before this line ever ran.
+        refuse_in_production("seed_billing_demo")
+        self._seed()
+
+    @transaction.atomic
+    def _seed(self):
         if not Plan.objects.exists():
             self.stdout.write(
                 self.style.ERROR("No plans found. Run seed_plans first.")
