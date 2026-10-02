@@ -48,23 +48,53 @@ class CourseViewSet(viewsets.ModelViewSet):
     """Catalogue for learners, authoring surface for employers and admins."""
 
     permission_classes = [IsAuthenticated]
-    filterset_fields = ["category", "level", "language", "provider_type", "is_certified"]
-    search_fields = ["title", "summary", "description"]
-    ordering_fields = ["published_at", "rating_avg", "enrollment_count", "duration_minutes"]
+    filterset_fields = [
+        "category",
+        "level",
+        "language",
+        "provider_type",
+        "is_certified",
+        "employer",
+    ]
+    ordering_fields = [
+        "published_at",
+        "rating_avg",
+        "enrollment_count",
+        "duration_minutes",
+        "created_at",
+    ]
+
+    @property
+    def search_fields(self):
+        fields = ["title", "summary", "description"]
+        # Admins look courses up by who sent them. Nobody else may: searching
+        # by an author's email would tell anyone whether that address wrote a
+        # published course.
+        user = getattr(getattr(self, "request", None), "user", None)
+        if user is not None and getattr(user, "is_admin", False):
+            fields += ["employer__legal_name", "employer__brand_name", "author__email"]
+        return fields
 
     def get_queryset(self):
         user = self.request.user
-        base = Course.objects.select_related("employer", "category").prefetch_related(
-            "skill_links__skill"
-        )
+        base = Course.objects.select_related(
+            "employer", "category", "provider"
+        ).prefetch_related("skill_links__skill")
 
         if self.action in {"retrieve", "modules"}:
             base = base.prefetch_related("modules__lessons", "tests")
 
         # Everyone sees published courses. Admins see everything, including
-        # the moderation queue.
+        # the moderation queue — and who each course came from, which the
+        # serializer reads off these relations.
         if user.is_admin:
-            queryset = base
+            queryset = base.select_related(
+                "author__student_profile",
+                "author__employer_profile",
+                "provider",
+                "moderated_by__student_profile",
+                "moderated_by__employer_profile",
+            )
         elif user.role == Role.EMPLOYER:
             company = getattr(user, "employer_profile", None)
             mine = Q(author=user)
@@ -152,8 +182,15 @@ class CourseViewSet(viewsets.ModelViewSet):
         from apps.billing.enums import Feature as BillingFeature
         from apps.billing.services import consume
 
+        course = self.get_object()
+        # Before the quota is charged: an external course cannot be enrolled
+        # on, and refusing it must not cost the learner an enrolment.
+        if course.external_url:
+            raise DomainError(
+                "This course is taken on the partner's site.", code="course_is_external"
+            )
         consume(request.user, BillingFeature.COURSE_ENROLLMENT)
-        enrollment = enroll(request.user, self.get_object())
+        enrollment = enroll(request.user, course)
         return Response(
             EnrollmentSerializer(enrollment).data, status=status.HTTP_201_CREATED
         )
@@ -204,6 +241,20 @@ class CourseViewSet(viewsets.ModelViewSet):
             },
         )
         return Response(CourseSkillSerializer(link).data, status=201)
+
+    @extend_schema(request=None, responses={204: None})
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"skills/(?P<skill_id>[0-9a-f-]+)",
+    )
+    def remove_skill(self, request, pk=None, skill_id=None):
+        """Adding a skill had an endpoint and taking one off did not, so a
+        mistaken pick stayed on the course for good."""
+        course = self.get_object()
+        self._assert_can_edit(course)
+        CourseSkill.objects.filter(course=course, skill_id=skill_id).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 def _questions_without_answers(questions: list[dict]) -> list[dict]:
@@ -820,6 +871,13 @@ class CourseModuleViewSet(CourseAuthoringMixin, viewsets.ModelViewSet):
         if course is None:
             raise NotAllowed("A module must belong to a course.")
         self.assert_can_edit_course(course)
+        if course.external_url:
+            # Its lessons are on the other platform; a module here would be a
+            # syllabus learners can see and never open.
+            raise DomainError(
+                "This course is taken on another platform and has no lessons here.",
+                code="course_is_external",
+            )
         serializer.save()
 
     def perform_update(self, serializer):

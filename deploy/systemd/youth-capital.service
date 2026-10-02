@@ -1,0 +1,69 @@
+# systemd unit for the Youth Capital API.
+#
+# Install to /etc/systemd/system/youth-capital.service, replacing the two
+# placeholders:
+#   __BACKEND_DIR__   the backend checkout, e.g. /srv/youth-capital/backend
+#   __RUN_USER__      the unprivileged account that owns it, e.g. youthcapital
+#
+#   systemctl daemon-reload && systemctl enable --now youth-capital
+
+[Unit]
+Description=Youth Capital API (gunicorn)
+Documentation=file://__BACKEND_DIR__/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=__RUN_USER__
+Group=__RUN_USER__
+WorkingDirectory=__BACKEND_DIR__
+
+# Order matters here. The environment file is read first, and the settings
+# module is set after it, so it wins.
+#
+# This is not fussiness: .env.example ships with
+# DJANGO_SETTINGS_MODULE=config.settings.dev, and a copy of it on a server
+# would otherwise start the whole site on development settings — DEBUG on,
+# lax cookies, the throwaway signing key. Setting it below the file makes that
+# impossible regardless of what the file says.
+EnvironmentFile=__BACKEND_DIR__/.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings.prod
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=__BACKEND_DIR__/.venv/bin/gunicorn \
+    -c __BACKEND_DIR__/deploy/gunicorn/gunicorn.conf.py \
+    config.wsgi:application
+ExecReload=/bin/kill -s HUP $MAINPID
+KillSignal=SIGTERM
+Restart=always
+RestartSec=3
+
+# --- sandboxing ------------------------------------------------------------
+#
+# The process needs to read its checkout and write exactly three directories:
+# the two upload roots and its log file. Everything else on the filesystem is
+# read-only to it, which is what turns a hypothetical file-write bug into an
+# error in the journal instead of a modified binary.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=__BACKEND_DIR__/media __BACKEND_DIR__/private-media __BACKEND_DIR__/logs
+
+# .env holds the signing key, the database URL and the Anthropic key. It is
+# read by this unit and should be readable by nobody else:
+#   chown __RUN_USER__:__RUN_USER__ __BACKEND_DIR__/.env && chmod 600 ...
+
+[Install]
+WantedBy=multi-user.target

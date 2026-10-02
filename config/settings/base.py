@@ -28,6 +28,8 @@ env = environ.Env(
     AXES_COOLOFF_MINUTES=(int, 30),
     MINIMUM_AGE=(int, 14),
     AGE_OF_MAJORITY=(int, 18),
+    TRUSTED_PROXY_COUNT=(int, 0),
+    REDIS_URL=(str, ""),
 )
 
 # Load backend/.env when present. Missing file is fine — the environment wins.
@@ -199,13 +201,52 @@ AXES_RESET_ON_SUCCESS = True
 AXES_ENABLE_ADMIN = True
 AXES_LOCKOUT_CALLABLE = "apps.accounts.lockout.lockout_response"
 
+# Axes asks the same function as everything else who the client is.
+#
+# Left to itself it reads REMOTE_ADDR, which behind a reverse proxy is the
+# proxy. Every visitor then shared one address, and since a lockout is keyed on
+# the address *and* the username together, it became a lockout on the username
+# alone: five wrong passwords from anywhere locked that person out for half an
+# hour, which is a way to take someone's account away from them rather than a
+# defence against guessing.
+#
+# This setting takes precedence over the django-ipware options above it in
+# Axes' own resolution order, so those are deliberately left unset: two
+# configurable ways of deciding the same thing is how they drift apart.
+AXES_CLIENT_IP_CALLABLE = "apps.common.context.get_client_ip"
+
 # --------------------------------------------------------------------------
 # REST framework
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# The proxy chain
+# --------------------------------------------------------------------------
+# How many reverse proxies of ours stand in front of the application.
+#
+# Zero is the honest default: on a developer's machine and in the test suite
+# nothing does, so `X-Forwarded-For` can only have been written by the caller
+# and is ignored. Production sets 1 for nginx (config/settings/prod.py); an
+# external proxy in front of nginx — Cloudflare, a load balancer — makes it 2.
+#
+# Everything that decides "who is this request from" reads this one number:
+# DRF's rate limits through NUM_PROXIES below, the lockout after failed
+# sign-ins and the audit log through apps/common/context.get_client_ip. That
+# is the point of having it: a visitor cannot be one address to the rate
+# limiter and another to the log.
+#
+# Raising it is only safe alongside the proxy configuration in deploy/nginx,
+# which overwrites the header rather than appending to it. See deploy/README.md.
+TRUSTED_PROXY_COUNT = env("TRUSTED_PROXY_COUNT")
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "apps.accounts.authentication.CookieJWTAuthentication",
     ),
+    # Unset, DRF hashes the whole `X-Forwarded-For` header into the rate-limit
+    # key. A caller who put anything at all in that header therefore chose its
+    # own bucket, and by changing one character per request had a fresh one
+    # every time: the sign-in limit counted to one and started again.
+    "NUM_PROXIES": TRUSTED_PROXY_COUNT,
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.DefaultPagination",
     "PAGE_SIZE": 20,
@@ -343,6 +384,25 @@ MAX_UPLOAD_SIZE_MB = 5
 ALLOWED_UPLOAD_BOOK_TYPES = ["application/pdf", "application/epub+zip"]
 MAX_BOOK_SIZE_MB = 40
 
+# Lesson videos an author uploads from their own computer.
+#
+# MP4 and WebM only: those are the two every browser plays in a <video> tag.
+# A .mov or .avi would upload fine and then show a learner a black box. 500 MB
+# is a 20-30 minute lesson at 1080p; anything longer is two lessons. Behind a
+# reverse proxy, its own body-size limit (nginx client_max_body_size) must be
+# raised to match, or large uploads die there before reaching Django.
+ALLOWED_UPLOAD_VIDEO_TYPES = ["video/mp4", "video/webm"]
+MAX_VIDEO_SIZE_MB = 500
+
+# Where an employer may point a course that is taken off the platform, and the
+# name learners see for it. A closed list on purpose: the learner is sent to
+# this address from a page with the platform's name on it, so an open field
+# would let any employer route students to any site at all. Add a platform
+# here (bare domain, no "www.") when it is wanted.
+EXTERNAL_COURSE_PLATFORMS = {
+    "coursera.org": "Coursera",
+}
+
 # The ceiling on decoded image size, in megapixels.
 #
 # File size is not the limit that matters here: a single-colour PNG of 20000 x
@@ -368,6 +428,40 @@ AI_LOG_PROMPT_CONTENT = env.bool("AI_LOG_PROMPT_CONTENT", default=False)
 # Recompute knowledge/capital/match synchronously when no broker is configured.
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="")
 RECOMPUTE_SYNCHRONOUS = not CELERY_BROKER_URL
+
+# --------------------------------------------------------------------------
+# Cache — and therefore where rate limits are counted
+# --------------------------------------------------------------------------
+# DRF keeps every throttle counter in the default cache, and nothing else in
+# this project uses it. So the choice of backend is not a performance setting:
+# it decides whether "5 sign-in attempts per minute" is one limit or one limit
+# per process.
+#
+# With the in-memory backend and gunicorn's four workers it was four separate
+# counts of five, reset whenever the service restarted. Redis makes it one
+# count that survives a restart. Production insists on it
+# (config/settings/prod.py); a developer's machine and the test suite keep the
+# in-memory cache and need nothing installed or running.
+REDIS_URL = env("REDIS_URL")
+
+if REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL,
+            # A prefix, in case this Redis ever serves something else too:
+            # without it two applications share a keyspace and each one's
+            # `clear()` empties the other's rate limits.
+            "KEY_PREFIX": "yc",
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "youth-capital-local",
+        }
+    }
 
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
 

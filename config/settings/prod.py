@@ -1,7 +1,7 @@
 """Production settings — hardened."""
 
 from .base import *  # noqa: F403
-from .base import BASE_DIR, MIDDLEWARE, env
+from .base import BASE_DIR, MIDDLEWARE, REST_FRAMEWORK, env
 
 DEBUG = False
 
@@ -33,6 +33,58 @@ if env.bool("BILLING_MANUAL_AUTO_CONFIRM", default=False):
         "every manual payment without any money moving."
     )
 BILLING_MANUAL_AUTO_CONFIRM = False
+
+# --- The proxy in front of us -------------------------------------------
+#
+# One: the nginx described in deploy/nginx. Two if an external proxy is ever
+# put in front of it — Cloudflare or a load balancer — because then nginx sees
+# that proxy rather than the visitor.
+#
+# This is what makes the forwarded header worth reading at all. It is only
+# sound in company with the other half of the arrangement: nginx overwrites
+# `X-Forwarded-For` with the address it accepted the connection from, and
+# gunicorn listens on the loopback interface, so no request can arrive with a
+# header of its own choosing. Raising this number without that configuration
+# in place would hand the choice of address back to the caller.
+TRUSTED_PROXY_COUNT = env.int("TRUSTED_PROXY_COUNT", default=1)
+
+# Re-stated rather than inherited, because the dictionary in base.py captured
+# the value it saw at import time. The same trap as SIMPLE_JWT's signing key:
+# setting the number above and leaving the dictionary alone would leave the
+# rate limits reading the development default of zero.
+REST_FRAMEWORK = {**REST_FRAMEWORK, "NUM_PROXIES": TRUSTED_PROXY_COUNT}
+
+# --- Rate limits have to be shared between workers ----------------------
+#
+# Refusing to start is deliberate. Without Redis the limits still appear to
+# work — nothing errors, the tests pass, a burst of sign-in attempts is
+# refused — while each gunicorn worker silently counts its own five per
+# minute and forgets them on restart. A protection that looks present and
+# is not is worse than an outage, because nobody goes looking for it.
+# Read here rather than taken from base.py, and the cache built here too.
+# base.py evaluated its own copy when *it* was first imported, which in a
+# process that has already loaded another settings module is the wrong moment.
+# Reading the environment at this module's import time is also what the rest
+# of this file does for the secret key and the billing flag.
+REDIS_URL = env("REDIS_URL", default="")
+
+if not REDIS_URL:
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured(
+        "REDIS_URL is required in production. Rate limits are counted in the "
+        "cache, so an in-process cache means every gunicorn worker keeps its "
+        "own counters and a restart clears them. Set REDIS_URL to something "
+        "like redis://127.0.0.1:6379/0 (rediss:// for TLS)."
+    )
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+        "KEY_PREFIX": "yc",
+    }
+}
 
 # --- Transport security -------------------------------------------------
 SECURE_SSL_REDIRECT = True

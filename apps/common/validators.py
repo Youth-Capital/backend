@@ -20,6 +20,7 @@ MAX_UPLOAD_BYTES = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 DOCUMENT_EXTENSIONS = {".pdf"}
 BOOK_EXTENSIONS = {".pdf", ".epub"}
+VIDEO_EXTENSIONS = {".mp4", ".m4v", ".webm"}
 
 
 def _extension(name: str) -> str:
@@ -136,5 +137,38 @@ def validate_book_upload(file_obj) -> None:
             raise ValidationError(_("File is not a valid EPUB."))
         if b"application/epub+zip" not in head:
             raise ValidationError(_("File is not a valid EPUB."))
+    finally:
+        file_obj.seek(position)
+
+
+def validate_video_upload(file_obj) -> None:
+    """A lesson video from the author's own computer.
+
+    MP4 or WebM, checked by their bytes rather than their name: a renamed
+    .avi would upload and then play as a black box for every learner.
+
+    * MP4 (and .m4v) is an ISO media file, whose first box is `ftyp` — the
+      four bytes at offset 4.
+    * WebM is Matroska, which opens with the EBML magic 1A 45 DF A3.
+    """
+    validate_upload_size(file_obj, settings.MAX_VIDEO_SIZE_MB)
+
+    extension = _extension(file_obj.name)
+    if extension not in VIDEO_EXTENSIONS:
+        raise ValidationError(_("Only MP4 and WebM videos are allowed."))
+
+    content_type = getattr(file_obj, "content_type", "")
+    if content_type and content_type not in settings.ALLOWED_UPLOAD_VIDEO_TYPES:
+        raise ValidationError(_("Unsupported video format."))
+
+    position = file_obj.tell()
+    try:
+        file_obj.seek(0)
+        head = file_obj.read(12)
+        if extension == ".webm":
+            if not head.startswith(b"\x1a\x45\xdf\xa3"):
+                raise ValidationError(_("File is not a valid WebM video."))
+        elif head[4:8] != b"ftyp":
+            raise ValidationError(_("File is not a valid MP4 video."))
     finally:
         file_obj.seek(position)

@@ -26,6 +26,14 @@ class Command(BaseCommand):
             action="store_true",
             help="Create the provider if the slug is unknown.",
         )
+        parser.add_argument(
+            "--publish",
+            action="store_true",
+            help=(
+                "Publish the courses straight away instead of sending them to "
+                "the moderation queue. The decision is yours, not the file's."
+            ),
+        )
 
     def handle(self, *args, **options):
         path = Path(options["file"])
@@ -46,7 +54,9 @@ class Command(BaseCommand):
             raise CommandError(f"{provider.name} is not accepting imports.")
 
         payload = json.loads(path.read_text(encoding="utf-8"))
-        run = import_catalogue(provider, payload, source=path.name)
+        run = import_catalogue(
+            provider, payload, source=path.name, publish=options["publish"]
+        )
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -59,5 +69,8 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(f"  {problem['course']}: {problem['error']}"))
 
         # Imported courses wait for moderation — nothing reaches learners
-        # because a partner sent a file.
-        self.stdout.write("Imported courses are PENDING_REVIEW until approved.")
+        # because a partner sent a file — unless whoever ran this said so.
+        if options["publish"]:
+            self.stdout.write("Imported courses are PUBLISHED (--publish).")
+        else:
+            self.stdout.write("Imported courses are PENDING_REVIEW until approved.")

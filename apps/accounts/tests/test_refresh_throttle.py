@@ -60,6 +60,10 @@ PRODUCTION_PLACEHOLDERS = {
     "DEFAULT_FROM_EMAIL": "noreply@example.invalid",
     "SENTRY_DSN": "",
     "SENTRY_ENVIRONMENT": "test",
+    # Production also refuses to import without a shared cache for the rate
+    # limits. Nothing here connects to it; naming it is what the settings
+    # module checks. See apps/common/tests/test_cache_backend.py.
+    "REDIS_URL": "redis://127.0.0.1:6379/0",
 }
 
 

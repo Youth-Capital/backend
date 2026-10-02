@@ -1,0 +1,161 @@
+{
+  "_comment": "Coursera courses matched to the platform's professions by skill. Every URL was checked to answer 200 on 2026-09-28, and 'offered_by' is the partner named on the course page. Import: python manage.py import_courses --provider coursera --create-provider --file apps/learning/catalogues/coursera.json --publish",
+  "courses": [
+    {
+      "external_id": "google-data-analytics",
+      "title": "Google Data Analytics Professional Certificate",
+      "summary": "Google · Ma'lumotlarni tozalash, SQL, jadvallar va vizualizatsiya. Ma'lumotlar tahlilchisi kasbi uchun.",
+      "description": "Google tomonidan tayyorlangan sertifikat dasturi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "data",
+      "external_url": "https://www.coursera.org/professional-certificates/google-data-analytics",
+      "skills": ["data-analysis", "sql", "excel", "critical-thinking"]
+    },
+    {
+      "external_id": "sql-for-data-science",
+      "title": "SQL for Data Science",
+      "summary": "University of California, Davis · Ma'lumotlar bilan ishlash uchun SQL asoslari.",
+      "description": "University of California, Davis kursi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "data",
+      "external_url": "https://www.coursera.org/learn/sql-for-data-science",
+      "skills": ["sql", "data-analysis"]
+    },
+    {
+      "external_id": "excel-basics-data-analysis-ibm",
+      "title": "Excel Basics for Data Analysis",
+      "summary": "IBM · Excel'da ma'lumotlarni tahlil qilish asoslari.",
+      "description": "IBM kursi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "data",
+      "external_url": "https://www.coursera.org/learn/excel-basics-data-analysis-ibm",
+      "skills": ["excel", "data-analysis"]
+    },
+    {
+      "external_id": "microsoft-power-bi-data-analyst",
+      "title": "Microsoft Power BI Data Analyst Professional Certificate",
+      "summary": "Microsoft · Power BI'da hisobotlar va dashboardlar yaratish.",
+      "description": "Microsoft tomonidan tayyorlangan sertifikat dasturi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "data",
+      "external_url": "https://www.coursera.org/professional-certificates/microsoft-power-bi-data-analyst",
+      "skills": ["power-bi", "data-analysis"]
+    },
+    {
+      "external_id": "python-for-everybody",
+      "title": "Python for Everybody",
+      "summary": "University of Michigan · Noldan Python dasturlash.",
+      "description": "University of Michigan ixtisoslashuvi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "programming",
+      "external_url": "https://www.coursera.org/specializations/python",
+      "skills": ["python", "problem-solving"]
+    },
+    {
+      "external_id": "django-for-everybody",
+      "title": "Django for Everybody",
+      "summary": "University of Michigan · Python va Django'da veb-ilovalar yaratish.",
+      "description": "University of Michigan ixtisoslashuvi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "INTERMEDIATE",
+      "is_certified": true,
+      "category": "programming",
+      "external_url": "https://www.coursera.org/specializations/django",
+      "skills": ["django", "python"]
+    },
+    {
+      "external_id": "meta-front-end-developer",
+      "title": "Meta Front-End Developer Professional Certificate",
+      "summary": "Meta · HTML, CSS, JavaScript va React bilan frontend dasturlash.",
+      "description": "Meta tomonidan tayyorlangan sertifikat dasturi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "programming",
+      "external_url": "https://www.coursera.org/professional-certificates/meta-front-end-developer",
+      "skills": ["javascript", "html-css", "react", "git"]
+    },
+    {
+      "external_id": "google-cybersecurity",
+      "title": "Google Cybersecurity Professional Certificate",
+      "summary": "Google · Linux, tarmoqlar, SIEM va insidentlarga javob berish.",
+      "description": "Google tomonidan tayyorlangan sertifikat dasturi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "cybersecurity",
+      "external_url": "https://www.coursera.org/professional-certificates/google-cybersecurity",
+      "skills": ["linux", "networking", "siem", "incident-response", "python"]
+    },
+    {
+      "external_id": "google-digital-marketing-ecommerce",
+      "title": "Google Digital Marketing & E-commerce Professional Certificate",
+      "summary": "Google · SEO, kontent, ijtimoiy tarmoqlar va marketing tahlili.",
+      "description": "Google tomonidan tayyorlangan sertifikat dasturi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "marketing",
+      "external_url": "https://www.coursera.org/professional-certificates/google-digital-marketing-ecommerce",
+      "skills": ["seo", "content-marketing", "smm", "analytics-marketing"]
+    },
+    {
+      "external_id": "google-ux-design",
+      "title": "Google UX Design Professional Certificate",
+      "summary": "Google · UX tadqiqot, Figma'da prototiplash va UI dizayn.",
+      "description": "Google tomonidan tayyorlangan sertifikat dasturi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "design",
+      "external_url": "https://www.coursera.org/professional-certificates/google-ux-design",
+      "skills": ["ux-research", "prototyping", "figma", "ui-design"]
+    },
+    {
+      "external_id": "wharton-accounting",
+      "title": "Introduction to Financial Accounting",
+      "summary": "University of Pennsylvania (Wharton) · Moliyaviy buxgalteriya asoslari.",
+      "description": "University of Pennsylvania kursi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "finance",
+      "external_url": "https://www.coursera.org/learn/wharton-accounting",
+      "skills": ["accounting", "financial-literacy"]
+    },
+    {
+      "external_id": "entrepreneurship-umd",
+      "title": "Entrepreneurship: Launching an Innovative Business",
+      "summary": "University of Maryland · G'oyadan biznesgacha: innovatsion loyihani ishga tushirish.",
+      "description": "University of Maryland, College Park ixtisoslashuvi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "business",
+      "external_url": "https://www.coursera.org/specializations/entrepreneurship",
+      "skills": ["entrepreneurship", "business-model"]
+    },
+    {
+      "external_id": "business-model-canvas",
+      "title": "Business Model Canvas: A Tool for Entrepreneurs and Innovators",
+      "summary": "Kennesaw State University · Business Model Canvas bilan biznes modelini qurish.",
+      "description": "Kennesaw State University loyihaviy kursi. Kurs ingliz tilida, Coursera platformasida o'tiladi.",
+      "language": "en",
+      "level": "BEGINNER",
+      "is_certified": true,
+      "category": "business",
+      "external_url": "https://www.coursera.org/learn/business-model-canvas",
+      "skills": ["business-model", "entrepreneurship"]
+    }
+  ]
+}

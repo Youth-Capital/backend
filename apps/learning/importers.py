@@ -24,6 +24,7 @@ from django.utils.text import slugify
 
 from apps.common.enums import ModerationStatus
 
+from .external import clean_external_url
 from .models import Course, CourseModule, Lesson
 from .providers import (
     AttachmentKind,
@@ -64,6 +65,32 @@ def _validate(entry: dict) -> str | None:
     language = entry.get("language")
     if language not in LANGUAGES:
         return f"language must be one of {sorted(LANGUAGES)}, got {language!r}"
+
+    # A course taken elsewhere is a link, not a syllabus: it needs an address
+    # the learner can be sent to, and it may not carry lessons of its own.
+    external_url = entry.get("external_url")
+    if external_url:
+        # The same rule the authoring API applies, by calling the same
+        # function. A prefix check of its own let this path accept addresses
+        # the API refuses — any https host at all, credentials in the
+        # authority, a lookalike domain, a tracking query — and a learner is
+        # sent to a partner's address from a page carrying our name, so the
+        # two paths cannot have two standards.
+        try:
+            cleaned = clean_external_url(str(external_url))
+        except ValueError as problem:
+            return (
+                "external_url must be an https:// course page on a platform in "
+                f"EXTERNAL_COURSE_PLATFORMS ({problem})"
+            )
+        # The column holds 500 characters. Truncating a URL would leave one
+        # that points somewhere else, so an over-long one is refused instead.
+        if len(cleaned) > 500:
+            return "external_url is longer than 500 characters"
+        if entry.get("modules"):
+            return "a course with external_url is taken elsewhere and has no modules"
+        return None
+
     modules = entry.get("modules")
     if not isinstance(modules, list) or not modules:
         return "at least one module with one lesson is required"
@@ -153,11 +180,33 @@ def _write_lessons(course: Course, modules: list[dict]) -> int:
     return written
 
 
+def _link_skills(course: Course, slugs) -> None:
+    """Tie the course to the skills it teaches, by taxonomy slug.
+
+    This is what makes a partner course show up where it is useful: the
+    career page and the development plan recommend courses by skill, so a
+    course with no skills is only ever found by someone searching for it.
+    Unknown slugs are ignored rather than invented — the taxonomy is curated.
+    """
+    from apps.taxonomy.models import Skill
+
+    if not isinstance(slugs, list):
+        return
+    from .models import CourseSkill
+
+    skills = list(Skill.objects.filter(slug__in=[str(s) for s in slugs]))
+    CourseSkill.objects.filter(course=course).exclude(skill__in=skills).delete()
+    for skill in skills:
+        CourseSkill.objects.get_or_create(course=course, skill=skill)
+
+
 @transaction.atomic
 def import_course(
-    provider: ContentProvider, entry: dict
+    provider: ContentProvider, entry: dict, *, publish: bool = False
 ) -> tuple[Course, bool, int]:
     """Create or update one course. Returns (course, created, lessons_written)."""
+    from .models import CourseLevel, ProviderType
+
     external_id = _clean_str(entry["external_id"], 120)
     language = entry["language"]
     title = _clean_str(entry["title"], 255)
@@ -173,10 +222,29 @@ def import_course(
         "description": _clean_str(entry.get("description"), 20000),
         "language": language,
         "translation_group": _resolve_translation_group(provider, entry),
-        # Partner content is never auto-published. Someone on the platform
-        # decides what learners see (see docs/01-ANALYSIS.md §3.2).
-        "status": ModerationStatus.PENDING_REVIEW,
+        "provider_type": ProviderType.PARTNER,
+        # Stored as the shared rule rebuilds it: https, the host, the path,
+        # and nothing else. Keeping the raw string here was the other half of
+        # the problem — a validated entry still wrote whatever tracking query
+        # came with it into the address every learner is sent to.
+        "external_url": clean_external_url(entry.get("external_url") or ""),
+        # Partner content is not published by the import itself: someone on
+        # the platform decides what learners see (docs/01-ANALYSIS.md §3.2).
+        # `publish` is that decision taken up front, by whoever runs the
+        # command with --publish — never something the partner's file can ask
+        # for.
+        "status": ModerationStatus.PUBLISHED if publish else ModerationStatus.PENDING_REVIEW,
     }
+    if publish:
+        defaults["published_at"] = (
+            course.published_at if course and course.published_at else timezone.now()
+        )
+    if entry.get("level") in CourseLevel.values:
+        defaults["level"] = entry["level"]
+    if isinstance(entry.get("duration_minutes"), int) and entry["duration_minutes"] >= 0:
+        defaults["duration_minutes"] = entry["duration_minutes"]
+    if "is_certified" in entry:
+        defaults["is_certified"] = bool(entry["is_certified"])
 
     # A partner may name a category from our taxonomy; unknown or absent
     # leaves it for the reviewer rather than filing it wrongly.
@@ -197,11 +265,16 @@ def import_course(
             setattr(course, key, value)
         course.save()
 
-    lessons = _write_lessons(course, entry["modules"])
+    if "skills" in entry:
+        _link_skills(course, entry["skills"])
+
+    lessons = _write_lessons(course, entry.get("modules") or [])
     return course, created, lessons
 
 
-def import_catalogue(provider: ContentProvider, payload: dict, *, source: str = "") -> ContentImport:
+def import_catalogue(
+    provider: ContentProvider, payload: dict, *, source: str = "", publish: bool = False
+) -> ContentImport:
     """Run a whole delivery, recording what happened."""
     run = ContentImport.objects.create(
         provider=provider, source=source[:255], status=ImportStatus.RUNNING
@@ -223,7 +296,7 @@ def import_catalogue(provider: ContentProvider, payload: dict, *, source: str = 
             result.reject(str(reference), problem)
             continue
         try:
-            _course, created, lessons = import_course(provider, entry)
+            _course, created, lessons = import_course(provider, entry, publish=publish)
         except Exception as error:  # one bad row must not sink the batch
             result.reject(str(reference), f"{type(error).__name__}: {error}"[:300])
             continue

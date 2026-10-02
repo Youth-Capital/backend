@@ -27,6 +27,10 @@ PRODUCTION_ENV = {
     "EMAIL_HOST": "smtp.example.test",
     "EMAIL_HOST_USER": "mailer",
     "EMAIL_HOST_PASSWORD": "not-a-real-password",
+    # Named so these tests fail over the key and nothing else. Production
+    # refuses to start without a shared cache for the rate limits; that rule
+    # has its own tests in apps/common/tests/test_cache_backend.py.
+    "REDIS_URL": "redis://127.0.0.1:6379/0",
 }
 
 

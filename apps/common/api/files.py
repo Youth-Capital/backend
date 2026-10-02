@@ -23,10 +23,11 @@ Two deliberate choices:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable
 
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, StreamingHttpResponse
 from drf_spectacular.utils import extend_schema
 from rest_framework.exceptions import NotAuthenticated
 from rest_framework.permissions import AllowAny
@@ -43,6 +44,8 @@ class FileKind:
     field: str
     #: (user, instance) -> bool
     may_read: Callable
+    #: How long a signed link to this kind keeps working. See LINK_TTL_SECONDS.
+    ttl: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +114,19 @@ def _may_read_certificate(user, certificate) -> bool:
     return certificate.user_id == user.id or user.is_admin
 
 
+#: How long a link handed out by the API keeps working. Long enough to click
+#: after the page loads; short enough that a link copied into a chat is dead by
+#: the time anyone else tries it.
+LINK_TTL_SECONDS = 10 * 60
+
+#: Course materials include uploaded lesson videos, and a <video> element keeps
+#: fetching from the address it was given for as long as the lesson is open —
+#: every seek is a new request. Ten minutes would break the player partway
+#: through a longer lesson. A few hours covers a sitting; the link still names
+#: the one person it was issued to, and the view still asks whether that person
+#: may open the course, so a learner who loses access loses the video too.
+COURSE_MATERIAL_TTL_SECONDS = 4 * 60 * 60
+
 REGISTRY: dict[str, FileKind] = {
     "portfolio-item": FileKind(_portfolio_item, "file", _may_read_portfolio),
     "portfolio-cover": FileKind(_portfolio_item, "cover", _may_read_portfolio),
@@ -118,16 +134,13 @@ REGISTRY: dict[str, FileKind] = {
         _project_asset, "file", _may_read_experience_asset
     ),
     "course-material": FileKind(
-        _course_material, "file", _may_read_course_material
+        _course_material,
+        "file",
+        _may_read_course_material,
+        ttl=COURSE_MATERIAL_TTL_SECONDS,
     ),
     "certificate": FileKind(_certificate, "file", _may_read_certificate),
 }
-
-
-#: How long a link handed out by the API keeps working. Long enough to click
-#: after the page loads; short enough that a link copied into a chat is dead by
-#: the time anyone else tries it.
-LINK_TTL_SECONDS = 10 * 60
 _SALT = "apps.common.protected-file"
 
 
@@ -167,8 +180,9 @@ def _link_holder(token: str, kind: str, pk):
 
     from apps.accounts.models import User
 
+    ttl = REGISTRY[kind].ttl or LINK_TTL_SECONDS
     try:
-        claim = signing.loads(token, salt=_SALT, max_age=LINK_TTL_SECONDS)
+        claim = signing.loads(token, salt=_SALT, max_age=ttl)
     except signing.BadSignature:  # includes SignatureExpired
         return None
     if claim.get("k") != kind or claim.get("o") != str(pk):
@@ -224,15 +238,77 @@ class ProtectedFileView(APIView):
         except FileNotFoundError as exc:
             raise Http404 from exc
 
-        # `as_attachment` keeps the browser from rendering an upload inline:
-        # an uploaded SVG or HTML file rendered on our own origin would be a
-        # stored cross-site scripting hole.
-        response = FileResponse(
-            handle, as_attachment=True, filename=stored.name.rsplit("/", 1)[-1]
-        )
+        filename = stored.name.rsplit("/", 1)[-1]
+        partial = _byte_range(request.META.get("HTTP_RANGE", ""), stored.size)
+        if partial is not None:
+            response = _partial_response(handle, filename, *partial, stored.size)
+        else:
+            # `as_attachment` keeps the browser from rendering an upload
+            # inline: an uploaded SVG or HTML file rendered on our own origin
+            # would be a stored cross-site scripting hole.
+            response = FileResponse(handle, as_attachment=True, filename=filename)
+        # A <video> element plays straight from here, and without ranges it
+        # can neither seek nor start an MP4 whose index sits at the end of the
+        # file until the whole thing has downloaded.
+        response["Accept-Ranges"] = "bytes"
         # Somebody's own file, possibly fetched through a signed link: no
         # shared cache may keep a copy, and no page it is opened from learns
         # the link through its Referer.
         response["Cache-Control"] = "private, no-store"
         response["Referrer-Policy"] = "no-referrer"
         return response
+
+
+_RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
+_CHUNK = 64 * 1024
+
+
+def _byte_range(header: str, size: int) -> tuple[int, int] | None:
+    """The single byte range asked for, as (first, last) inclusive, or None.
+
+    Only one range: that is all a media player asks for, and multipart
+    responses buy nothing here. Anything unparseable, or outside the file,
+    falls back to the whole file rather than an error — the client gets more
+    than it asked for, which it can always cope with.
+    """
+    match = _RANGE.match(header.strip())
+    if not match or size <= 0:
+        return None
+    start, end = match.groups()
+    if start == "" and end == "":
+        return None
+    if start == "":
+        # "bytes=-500": the last 500 bytes.
+        first = max(size - int(end), 0)
+        last = size - 1
+    else:
+        first = int(start)
+        last = min(int(end), size - 1) if end else size - 1
+    if first > last or first >= size:
+        return None
+    return first, last
+
+
+def _partial_response(handle, filename: str, first: int, last: int, size: int):
+    import mimetypes
+
+    def chunks():
+        try:
+            handle.seek(first)
+            remaining = last - first + 1
+            while remaining > 0:
+                data = handle.read(min(_CHUNK, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+        finally:
+            handle.close()
+
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    response = StreamingHttpResponse(chunks(), status=206, content_type=content_type)
+    response["Content-Range"] = f"bytes {first}-{last}/{size}"
+    response["Content-Length"] = str(last - first + 1)
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["X-Content-Type-Options"] = "nosniff"
+    return response

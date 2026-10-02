@@ -4,3 +4,11 @@ gunicorn==23.0.0
 whitenoise[brotli]==6.9.0
 django-csp==4.0
 sentry-sdk[django]==2.34.1
+
+# The client behind Django's own RedisCache backend. Production refuses to
+# start without REDIS_URL: the rate limits are counted in the cache, and with
+# an in-process cache each gunicorn worker counts its own. Not in base.txt
+# because development and the test suite use the in-memory cache and need
+# neither the package nor a server — install it locally only if you set
+# REDIS_URL there.
+redis==8.1.0

@@ -9,6 +9,7 @@ from apps.common.validators import (
     validate_book_upload,
     validate_document_upload,
     validate_image_upload,
+    validate_video_upload,
 )
 
 from ..models import (
@@ -116,6 +117,10 @@ class CourseListSerializer(serializers.ModelSerializer):
     skills = serializers.SerializerMethodField()
     completion_rate = serializers.IntegerField(read_only=True)
     my_enrollment = serializers.SerializerMethodField()
+    origin = serializers.SerializerMethodField()
+    #: "Coursera" for a course taken on Coursera, else empty. Separate from
+    #: provider_name, which stays the company that listed it.
+    external_platform = serializers.SerializerMethodField()
 
     class Meta:
         model = Course
@@ -140,11 +145,81 @@ class CourseListSerializer(serializers.ModelSerializer):
             "published_at",
             "skills",
             "my_enrollment",
+            "origin",
+            "created_at",
+            "external_url",
+            "external_platform",
         ]
+
+    def get_external_platform(self, course) -> str:
+        from ..external import platform_name
+
+        return platform_name(course.external_url)
+
+    def get_origin(self, course) -> dict | None:
+        """Who put this course on the platform — for admins only.
+
+        A moderator deciding whether to publish a course needs to know which
+        company it came from and which person at that company wrote it, and to
+        be able to reach them. Learners and other employers get null: the
+        author's email is not catalogue information.
+        """
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None or not getattr(user, "is_admin", False):
+            return None
+
+        company = course.employer
+        author = course.author
+        partner = course.provider
+        moderator = course.moderated_by
+        return {
+            "company": (
+                {
+                    "id": str(company.id),
+                    "name": company.display_name,
+                    "legal_name": company.legal_name,
+                    "tax_id": company.tax_id,
+                    "industry": company.industry,
+                    "website": company.website,
+                    "verification_status": company.verification_status,
+                }
+                if company
+                else None
+            ),
+            "author": (
+                {
+                    "id": str(author.id),
+                    "name": author.display_name,
+                    "email": author.email,
+                    "phone": author.phone,
+                    "role": author.role,
+                }
+                if author
+                else None
+            ),
+            "partner": (
+                {
+                    "id": str(partner.id),
+                    "name": partner.name,
+                    "website": partner.website,
+                    "contact_email": partner.contact_email,
+                }
+                if partner
+                else None
+            ),
+            "moderated_by": (
+                {"id": str(moderator.id), "name": moderator.display_name}
+                if moderator
+                else None
+            ),
+        }
 
     def get_provider_name(self, course) -> str:
         if course.employer_id:
             return course.employer.display_name
+        if course.provider_id:
+            return course.provider.name
         return settings.PLATFORM_NAME
 
     def get_skills(self, course) -> list[dict]:
@@ -207,7 +282,30 @@ class CourseWriteSerializer(serializers.ModelSerializer):
             "duration_minutes",
             "cover_image",
             "is_certified",
+            "external_url",
         ]
+
+    def validate_external_url(self, value: str) -> str:
+        """Only the platforms the settings name, stored without its query."""
+        from ..external import clean_external_url
+
+        try:
+            cleaned = clean_external_url(value)
+        except ValueError:
+            names = ", ".join(sorted(set(settings.EXTERNAL_COURSE_PLATFORMS.values())))
+            raise serializers.ValidationError(
+                _("Paste the address of a course page on %(platforms)s.")
+                % {"platforms": names}
+            )
+
+        # A course is taken here or elsewhere, not both. One with lessons
+        # already written would show a learner a syllabus they cannot open,
+        # beside a button sending them somewhere else.
+        if cleaned and self.instance is not None and self.instance.modules.exists():
+            raise serializers.ValidationError(
+                _("This course already has lessons. Remove them first, or create a new course for the external one.")
+            )
+        return cleaned
 
 
 class LessonProgressSerializer(serializers.ModelSerializer):
@@ -363,6 +461,16 @@ class CourseMaterialSerializer(serializers.ModelSerializer):
     def get_video(self, material) -> dict | None:
         if material.kind != "VIDEO":
             return None
+        if material.file:
+            # Uploaded from the author's computer. Played by the page's own
+            # <video> element from the signed download link — an address the
+            # server wrote, like every embed_url, never one the author typed.
+            return {
+                "provider": "upload",
+                "url": self.get_file_url(material),
+                "embed_url": None,
+                "start": 0,
+            }
         from ..video import describe_video
 
         return describe_video(material.url)
@@ -414,6 +522,13 @@ class CourseMaterialSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"file": _("Attach the book, or give a link to it.")}
                 )
+            return attrs
+
+        if kind == "VIDEO" and file:
+            # A video from the author's own computer, rather than a YouTube
+            # link. Checked by its bytes: MP4 or WebM, the two every browser
+            # plays, so a learner never gets a black box.
+            validate_video_upload(file)
             return attrs
 
         if not url:

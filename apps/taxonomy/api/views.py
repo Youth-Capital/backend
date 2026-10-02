@@ -173,6 +173,7 @@ class ProfessionViewSet(viewsets.ModelViewSet):
         """Current -> missing -> recommended courses -> vacancies (prompt §5)."""
         from apps.common.enums import ModerationStatus
         from apps.jobs.models import Vacancy
+        from apps.learning.external import platform_name
         from apps.learning.models import Course
         from apps.profiles.services import get_skill_gap
 
@@ -205,6 +206,12 @@ class ProfessionViewSet(viewsets.ModelViewSet):
                         "level": c.level,
                         "duration_minutes": c.duration_minutes,
                         "rating": float(c.rating_avg),
+                        # A Coursera course opens on Coursera; the page needs
+                        # the address and whose site it is to say so.
+                        "external_url": c.external_url,
+                        # The platform ("Coursera"), whether a partner import
+                        # or an employer listed it.
+                        "provider_name": platform_name(c.external_url),
                     }
                     for c in courses
                 ],

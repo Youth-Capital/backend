@@ -42,6 +42,11 @@ class Course(BaseModel):
     #: The partner's own id. Re-import updates this row instead of adding a
     #: second one — partners resend corrected batches, and that must be safe.
     external_id = models.CharField(max_length=120, blank=True, db_index=True)
+    #: Where the course is actually taken, when that is not here — a Coursera
+    #: page, say. Such a course has no lessons on the platform: the catalogue
+    #: lists it, recommends it for the skills it teaches, and sends the learner
+    #: to this address. Blank for every course hosted on the platform.
+    external_url = models.URLField(max_length=500, blank=True)
     #: Shared by the Uzbek, Russian and English versions of one course, so the
     #: catalogue shows a single entry and opens the reader's language.
     translation_group = models.UUIDField(null=True, blank=True, db_index=True)

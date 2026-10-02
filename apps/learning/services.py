@@ -39,7 +39,16 @@ def generate_course_slug(title: str) -> str:
 def submit_for_review(course: Course, *, actor) -> Course:
     if course.status not in {ModerationStatus.DRAFT, ModerationStatus.REJECTED}:
         raise Conflict("Only draft or rejected courses can be submitted for review.")
-    if not course.modules.exists():
+    if course.external_url:
+        # Taken elsewhere, so there are no lessons to require. What it does
+        # need is skills: they are how the career page and the plan find a
+        # course, and an external course with none is a link nobody is shown.
+        if not course.skill_links.exists():
+            raise DomainError(
+                "Add at least one skill this course teaches before submitting.",
+                code="course_no_skills",
+            )
+    elif not course.modules.exists():
         raise DomainError(
             "Add at least one module with a lesson before submitting.",
             code="course_empty",
@@ -143,6 +152,12 @@ def can_open_lesson(user, lesson: Lesson) -> bool:
 def enroll(user, course: Course) -> Enrollment:
     if not course.is_published:
         raise NotAllowed("This course is not available.", code="course_not_published")
+    if course.external_url:
+        # Taken on the partner's site. An enrolment here would be a progress
+        # bar that never moves, since the platform never sees the lessons.
+        raise DomainError(
+            "This course is taken on the partner's site.", code="course_is_external"
+        )
 
     enrollment, created = Enrollment.objects.get_or_create(user=user, course=course)
     if not created:

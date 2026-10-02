@@ -92,11 +92,32 @@ def test_a_tampered_link_is_refused(api, enrolled, course):
     assert api.get(link[:-3] + "xyz").status_code == 404
 
 
+def _later(monkeypatch, seconds):
+    """Move the clock the signature is checked against forward."""
+    import time
+
+    real_time = time.time
+    monkeypatch.setattr(time, "time", lambda: real_time() + seconds)
+
+
 def test_an_expired_link_is_refused(api, enrolled, course, monkeypatch):
+    """Course materials live longer than other links — a lesson video keeps
+    fetching as it plays — but they still die."""
     link = _link("course-material", course.material, enrolled)
-    monkeypatch.setattr(files, "LINK_TTL_SECONDS", -1)
+    _later(monkeypatch, files.COURSE_MATERIAL_TTL_SECONDS + 60)
 
     assert api.get(link).status_code == 404
+
+
+def test_other_files_keep_the_short_lifetime(student, monkeypatch):
+    """The longer lifetime is for course materials only; a CV-portfolio link
+    copied into a chat is still dead within minutes."""
+    item = PortfolioItem.objects.create(user=student, title="Work", file=_pdf())
+    token = files.file_url("portfolio-item", item, _Request(student)).split("?t=", 1)[1]
+
+    _later(monkeypatch, files.LINK_TTL_SECONDS + 60)
+
+    assert files._link_holder(token, "portfolio-item", item.pk) is None
 
 
 def test_losing_access_kills_a_link_already_issued(api, enrolled, course):

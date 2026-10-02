@@ -74,4 +74,10 @@ REST_FRAMEWORK = {  # noqa: F405
     "DEFAULT_THROTTLE_RATES": {
         scope: None for scope in globals()["REST_FRAMEWORK"]["DEFAULT_THROTTLE_RATES"]
     },
+    # Hermetic, like the signing key above: nothing stands in front of the
+    # test suite, so the forwarded header is never believed here. A test that
+    # needs a proxy says so itself with override_settings.
+    "NUM_PROXIES": 0,
 }
+
+TRUSTED_PROXY_COUNT = 0

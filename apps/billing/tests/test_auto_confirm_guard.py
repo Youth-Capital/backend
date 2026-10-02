@@ -29,6 +29,10 @@ PRODUCTION_ENV = {
     "EMAIL_HOST": "smtp.example.test",
     "EMAIL_HOST_USER": "mailer",
     "EMAIL_HOST_PASSWORD": "not-a-real-password",
+    # Production insists on a shared cache for the rate limits; nothing here
+    # connects to it, the settings module only checks that it was named.
+    # Why it insists: apps/common/tests/test_cache_backend.py.
+    "REDIS_URL": "redis://127.0.0.1:6379/0",
 }
 
 
