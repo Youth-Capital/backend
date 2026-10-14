@@ -5,6 +5,7 @@
 .env.*
 !.env.example
 *.env
+!.github/security-tools.env
 .envrc
 secrets.json
 credentials.json
@@ -23,6 +24,8 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.cache/
+.tools/
 .coverage
 htmlcov/
 

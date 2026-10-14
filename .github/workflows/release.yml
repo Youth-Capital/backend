@@ -1,0 +1,292 @@
+name: CI and release
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_only:
+        description: 'Publish and scan without updating infra (first package setup)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || 'prod-release' }}
+  cancel-in-progress: false
+  queue: max
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  security-gitleaks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: bash .github/scripts/security-scan.sh gitleaks
+      - name: Upload redacted scan report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-gitleaks
+          path: ${{ runner.temp }}/reports/
+          retention-days: 7
+          if-no-files-found: warn
+
+  security-semgrep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - run: bash .github/scripts/security-scan.sh semgrep
+      - name: Upload redacted scan report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-semgrep
+          path: ${{ runner.temp }}/reports/
+          retention-days: 7
+          if-no-files-found: warn
+
+  security-trivy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - run: bash .github/scripts/security-scan.sh source
+      - name: Upload redacted scan report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-trivy
+          path: ${{ runner.temp }}/reports/
+          retention-days: 7
+          if-no-files-found: warn
+
+  tests:
+    needs: [security-gitleaks, security-semgrep, security-trivy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+        env:
+          POSTGRES_DB: youthcapital_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d youthcapital_test"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:ci-only-password@localhost:5432/youthcapital_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.0'
+          python-version: '3.14.7'
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run --no-sync pytest
+      - name: Reject missing migrations
+        run: uv run --no-sync python manage.py makemigrations --check --dry-run
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.test
+      - run: node --test .github/scripts/release.test.mjs
+
+  build-publish:
+    needs: tests
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    environment: prod
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      INFRA_REPO: ${{ vars.INFRA_REPO }}
+      GHCR_TOKEN: ${{ github.token }}
+      APP_NAME: backend
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    outputs:
+      image_ref: ${{ steps.reference.outputs.image_ref }}
+      build_attempt: ${{ steps.tag.outputs.build_attempt }}
+      previous_version_id: ${{ steps.prune.outputs.previous_version_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+      - name: Create infra token
+        id: infra-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.INFRA_APP_ID }}
+          private-key: ${{ secrets.INFRA_APP_PRIVATE_KEY }}
+          owner: Youth-Capital
+          repositories: infra
+          permission-contents: read
+      - name: Prune obsolete versions before publishing
+        id: prune
+        run: node .github/scripts/release.mjs prepublish
+        env:
+          INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+      - name: Choose immutable image tag
+        id: tag
+        run: |
+          tag="$APP_NAME-$GITHUB_SHA-r$GITHUB_RUN_NUMBER-$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "build_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and publish
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ghcr.io/youth-capital/backend:${{ steps.tag.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/Youth-Capital/backend
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+          no-cache-filters: runtime
+      - name: Export digest-pinned image
+        id: reference
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image_ref=ghcr.io/youth-capital/$APP_NAME:$TAG@$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Published ghcr.io/youth-capital/$APP_NAME:$TAG@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  image-scan:
+    needs: build-publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE_REF: ${{ needs.build-publish.outputs.image_ref }}
+      TRIVY_PASSWORD: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan published image
+        run: bash .github/scripts/security-scan.sh image
+      - name: Generate image SBOM
+        if: ${{ always() }}
+        run: bash .github/scripts/security-scan.sh sbom
+      - name: Upload image reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-scan
+          path: ${{ runner.temp }}/reports/
+          retention-days: 7
+          if-no-files-found: warn
+
+  deploy:
+    needs: [build-publish, image-scan]
+    if: ${{ github.ref == 'refs/heads/main' && !inputs.publish_only }}
+    environment: prod
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    env:
+      INFRA_REPO: ${{ vars.INFRA_REPO }}
+      GHCR_TOKEN: ${{ github.token }}
+      IMAGE_REF: ${{ needs.build-publish.outputs.image_ref }}
+      BUILD_ATTEMPT: ${{ needs.build-publish.outputs.build_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+      - name: Create infra token
+        id: infra-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.INFRA_APP_ID }}
+          private-key: ${{ secrets.INFRA_APP_PRIVATE_KEY }}
+          owner: Youth-Capital
+          repositories: infra
+          permission-contents: write
+          permission-actions: write
+      - name: Update infra and wait for deployment
+        run: node .github/scripts/release.mjs deploy
+        env:
+          INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+
+  cleanup-ghcr:
+    needs: [build-publish, deploy]
+    environment: prod
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    env:
+      INFRA_REPO: ${{ vars.INFRA_REPO }}
+      GHCR_TOKEN: ${{ github.token }}
+      IMAGE_REF: ${{ needs.build-publish.outputs.image_ref }}
+      PREVIOUS_VERSION_ID: ${{ needs.build-publish.outputs.previous_version_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+      - name: Create infra token
+        id: infra-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.INFRA_APP_ID }}
+          private-key: ${{ secrets.INFRA_APP_PRIVATE_KEY }}
+          owner: Youth-Capital
+          repositories: infra
+          permission-contents: read
+      - name: Keep built and previous published images
+        run: node .github/scripts/release.mjs cleanup
+        env:
+          INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}

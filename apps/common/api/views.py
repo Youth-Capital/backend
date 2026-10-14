@@ -1,5 +1,6 @@
 """Health and readiness probes."""
 
+from django.core.cache import cache
 from django.db import connection
 from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import AllowAny
@@ -12,6 +13,7 @@ class HealthView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes: list = []
+    throttle_classes: list = []
 
     @extend_schema(responses={200: dict}, tags=["system"])
     def get(self, request):
@@ -23,6 +25,7 @@ class ReadyView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes: list = []
+    throttle_classes: list = []
 
     @extend_schema(responses={200: dict, 503: dict}, tags=["system"])
     def get(self, request):
@@ -34,6 +37,14 @@ class ReadyView(APIView):
             checks["database"] = "ok"
         except Exception as exc:
             checks["database"] = f"error: {type(exc).__name__}"
+
+        try:
+            # RedisCache.get hits Redis even when the key does not exist. Do not
+            # write shared keys or flush the cache just to check its connection.
+            cache.get("readiness-probe")
+            checks["cache"] = "ok"
+        except Exception as exc:
+            checks["cache"] = f"error: {type(exc).__name__}"
 
         healthy = all(value == "ok" for value in checks.values())
         return Response(

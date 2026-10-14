@@ -1,7 +1,7 @@
 """Production settings — hardened."""
 
 from .base import *  # noqa: F403
-from .base import BASE_DIR, MIDDLEWARE, REST_FRAMEWORK, env
+from .base import MIDDLEWARE, REST_FRAMEWORK, PRIVATE_MEDIA_ROOT, env
 
 DEBUG = False
 
@@ -36,16 +36,10 @@ BILLING_MANUAL_AUTO_CONFIRM = False
 
 # --- The proxy in front of us -------------------------------------------
 #
-# One: the nginx described in deploy/nginx. Two if an external proxy is ever
-# put in front of it — Cloudflare or a load balancer — because then nginx sees
-# that proxy rather than the visitor.
-#
-# This is what makes the forwarded header worth reading at all. It is only
-# sound in company with the other half of the arrangement: nginx overwrites
-# `X-Forwarded-For` with the address it accepted the connection from, and
-# gunicorn listens on the loopback interface, so no request can arrive with a
-# header of its own choosing. Raising this number without that configuration
-# in place would hand the choice of address back to the caller.
+# One host-installed Caddy proxy. It overwrites X-Forwarded-For with the
+# connection's client address and forwards the original HTTPS scheme. Gunicorn
+# binds 0.0.0.0 inside its container; Docker publishes port 8000 on host loopback
+# only. Change this count only alongside the corresponding edge configuration.
 TRUSTED_PROXY_COUNT = env.int("TRUSTED_PROXY_COUNT", default=1)
 
 # Re-stated rather than inherited, because the dictionary in base.py captured
@@ -83,8 +77,11 @@ CACHES = {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": REDIS_URL,
         "KEY_PREFIX": "yc",
+        "OPTIONS": {"socket_connect_timeout": 5, "socket_timeout": 5},
     }
 }
+
+DATABASES["default"].setdefault("OPTIONS", {})["connect_timeout"] = 5  # noqa: F405
 
 # --- Transport security -------------------------------------------------
 SECURE_SSL_REDIRECT = True
@@ -150,6 +147,15 @@ STORAGES = {
     },
 }
 
+WHITENOISE_KEEP_ONLY_HASHED_FILES = True
+
+# Large lesson uploads spill to the persistent private volume, not a RAM-backed
+# /tmp. The entrypoint creates this directory as the unprivileged app user.
+FILE_UPLOAD_TEMP_DIR = str(PRIVATE_MEDIA_ROOT / ".tmp")
+# Public upload directories must be traversable by the host's Caddy service.
+# The private volume root is mode 0700 and is never mounted into the proxy.
+FILE_UPLOAD_DIRECTORY_PERMISSIONS = 0o755
+
 # --- Email --------------------------------------------------------------
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = env("EMAIL_HOST")
@@ -173,20 +179,5 @@ if SENTRY_DSN:
         environment=env("SENTRY_ENVIRONMENT", default="production"),
     )
 
-# The handler opens its file the moment logging is configured, which is
-# before anything else in Django runs. On a fresh machine that directory does
-# not exist yet, and the process died at import with "Unable to configure
-# handler 'file'" — the whole application refusing to boot over a missing
-# folder. Creating it here costs nothing and removes a first-deploy failure.
-LOG_DIR = BASE_DIR / "logs"  # noqa: F405
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-LOGGING["handlers"]["file"] = {  # noqa: F405
-    "class": "logging.handlers.RotatingFileHandler",
-    "filename": str(LOG_DIR / "app.log"),
-    "maxBytes": 10 * 1024 * 1024,
-    "backupCount": 5,
-    "formatter": "verbose",
-    "filters": ["request_id"],
-}
-LOGGING["root"]["handlers"] = ["console", "file"]  # noqa: F405
+# Use the base console logger; Docker owns rotation and collection. Production
+# settings must not create files in the read-only application image.

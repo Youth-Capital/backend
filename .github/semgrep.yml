@@ -1,0 +1,32 @@
+rules:
+  - id: python-dynamic-eval
+    languages: [python]
+    severity: ERROR
+    message: Do not evaluate dynamically supplied Python code.
+    pattern-either:
+      - pattern: eval($VALUE, ...)
+      - pattern: exec($VALUE, ...)
+  - id: python-shell-command
+    languages: [python]
+    severity: ERROR
+    message: Pass an argument list without shell=True.
+    pattern: subprocess.$METHOD(..., shell=True, ...)
+  - id: python-unsafe-pickle
+    languages: [python]
+    severity: ERROR
+    message: Do not deserialize untrusted pickle data.
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+  - id: javascript-dynamic-code
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Do not execute dynamically supplied JavaScript.
+    pattern-either:
+      - pattern: eval($VALUE)
+      - pattern: new Function(...)
+  - id: javascript-html-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Use textContent or an explicitly reviewed sanitizer before assigning HTML.
+    pattern: $ELEMENT.innerHTML = $VALUE

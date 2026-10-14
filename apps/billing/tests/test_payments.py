@@ -8,6 +8,8 @@ that does not match the recorded payment is refused.
 import pytest
 from django.test import override_settings
 
+from apps.audit.models import AuditAction, AuditLog
+
 from apps.billing.enums import (
     BillingInterval,
     Feature,
@@ -81,6 +83,9 @@ def test_checkout_then_confirm_activates_the_plan(free_plan, paid_plan, student)
     student.refresh_from_db()
     assert student.subscription.plan.code == paid_plan.code
     assert student.subscription.status == SubscriptionStatus.ACTIVE
+    assert AuditLog.objects.filter(
+        actor=student, action=AuditAction.BILLING_PLAN_ACTIVATED,
+    ).exists()
 
 
 @override_settings(BILLING_MANUAL_AUTO_CONFIRM=True)
@@ -98,6 +103,9 @@ def test_confirm_is_idempotent(free_plan, paid_plan, student):
     second.user.refresh_from_db()
     assert second.user.subscription.current_period_start == period_start
     assert Payment.objects.filter(status=PaymentStatus.SUCCEEDED).count() == 1
+    assert AuditLog.objects.filter(
+        actor=student, action=AuditAction.BILLING_PLAN_ACTIVATED,
+    ).count() == 1
 
 
 @override_settings(BILLING_MANUAL_AUTO_CONFIRM=False)
@@ -157,6 +165,9 @@ def test_cancel_keeps_access_until_period_end(free_plan, paid_plan, student):
     assert subscription.cancel_at_period_end is True
     assert subscription.canceled_at is not None
     assert subscription.renews_on is None
+    assert AuditLog.objects.filter(
+        actor=student, action=AuditAction.BILLING_SUBSCRIPTION_CANCELED,
+    ).exists()
     # Paid-for time is not taken away.
     assert subscription.is_entitling is True
 

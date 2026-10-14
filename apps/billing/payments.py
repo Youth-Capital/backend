@@ -10,6 +10,7 @@ from __future__ import annotations
 from django.db import transaction
 from django.utils import timezone
 
+from apps.audit.models import AuditAction
 from apps.audit.services import log_action
 
 from .enums import PaymentStatus
@@ -105,7 +106,7 @@ class PaymentService:
         payment.save(update_fields=["subscription", "updated_at"])
 
         log_action(
-            action="BILLING_PLAN_ACTIVATED",
+            action=AuditAction.BILLING_PLAN_ACTIVATED,
             actor=payment.user,
             obj=subscription,
             after={
@@ -134,7 +135,7 @@ class PaymentService:
         except NotImplementedError:
             pass  # provider holds no mandate to revoke
         log_action(
-            action="BILLING_SUBSCRIPTION_CANCELED",
+            action=AuditAction.BILLING_SUBSCRIPTION_CANCELED,
             actor=user,
             obj=subscription,
             after={"plan": subscription.plan.code, "immediately": immediately},

@@ -25,6 +25,10 @@ class AuditAction(models.TextChoices):
     PII_ACCESS = "PII_ACCESS", _("Personal data accessed")
     EXPORT = "EXPORT", _("Data export")
     CONFIG_CHANGE = "CONFIG_CHANGE", _("Configuration change")
+    BILLING_PLAN_ACTIVATED = "BILLING_PLAN_ACTIVATED", _("Billing plan activated")
+    BILLING_SUBSCRIPTION_CANCELED = (
+        "BILLING_SUBSCRIPTION_CANCELED", _("Billing subscription canceled")
+    )
 
 
 class AuditSeverity(models.TextChoices):
@@ -51,7 +55,7 @@ class AuditLog(BaseModel):
     actor_email = models.CharField(max_length=254, blank=True)
     actor_role = models.CharField(max_length=16, blank=True)
 
-    action = models.CharField(max_length=20, choices=AuditAction.choices)
+    action = models.CharField(max_length=32, choices=AuditAction.choices)
     object_type = models.CharField(max_length=60, blank=True)
     object_id = models.CharField(max_length=64, blank=True)
     object_repr = models.CharField(max_length=200, blank=True)
@@ -78,4 +82,7 @@ class AuditLog(BaseModel):
         ]
 
     def __str__(self) -> str:
-        return f"{self.action} {self.object_type}#{self.object_id} by {self.actor_email or 'system'}"
+        return (
+            f"{self.action} {self.object_type}#{self.object_id} "
+            f"by {self.actor_email or 'system'}"
+        )

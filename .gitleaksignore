@@ -1,0 +1,5 @@
+# Historical registration-test payload: a synthetic test-account password.
+fa633a657828dfd01596462ead5c24d0884a2969:apps/accounts/tests/test_registration_consent.py:generic-api-key:22
+# Historical empty AUTH_COOKIE_DOMAIN followed by AXES_FAILURE_LIMIT:
+# the generic rule incorrectly joins these environment lines into a secret.
+be82755804b41df6624bc6bda2300987305fbe18:.env.example:generic-api-key:34
