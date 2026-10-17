@@ -26,7 +26,13 @@ class CookieJWTAuthentication(JWTAuthentication):
         if raw_token is None:
             return None
         validated = self.get_validated_token(raw_token)
-        return self.get_user(validated), validated
+        user = self.get_user(validated)
+        view = (request.parser_context or {}).get("view")
+        if not user.email_verified and not getattr(view, "allow_unverified_email", False):
+            from apps.common.exceptions import NotAllowed
+
+            raise NotAllowed("Verify your email to continue.", code="email_verification_required")
+        return user, validated
 
 
 def set_refresh_cookie(response, refresh_token: str):

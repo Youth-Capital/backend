@@ -220,8 +220,7 @@ class GuardianLink(BaseModel):
 
 
 class EmailVerification(BaseModel):
-    """Only a hash is stored: a leaked database dump must not hand over
-    working verification links."""
+    """A short-lived OTP. The keyed hash cannot be guessed from a database dump."""
 
     user = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="email_verifications"
@@ -229,13 +228,15 @@ class EmailVerification(BaseModel):
     token_hash = models.CharField(max_length=64, unique=True)
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    sent_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "accounts_email_verification"
 
     @property
     def is_usable(self) -> bool:
-        return self.used_at is None and self.expires_at > timezone.now()
+        return self.used_at is None and self.expires_at > timezone.now() and self.attempts < 5
 
 
 class PasswordResetToken(BaseModel):

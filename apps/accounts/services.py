@@ -23,7 +23,6 @@ from .models import (
     REQUIRED_CONSENTS,
     Consent,
     ConsentType,
-    EmailVerification,
     GuardianLink,
     GuardianStatus,
     LoginDevice,
@@ -38,7 +37,6 @@ logger = logging.getLogger(__name__)
 #: granted from the Django admin, never claimed at the registration endpoint.
 SELF_SERVICE_ROLES = frozenset({Role.STUDENT, Role.EMPLOYER})
 
-TOKEN_TTL = timedelta(hours=24)
 PASSWORD_RESET_TTL = timedelta(hours=1)
 
 
@@ -199,29 +197,6 @@ def has_consent(user: User, consent_type: str) -> bool:
 # ---------------------------------------------------------------------------
 # One-time tokens
 # ---------------------------------------------------------------------------
-def create_email_verification(user: User) -> str:
-    raw = secrets.token_urlsafe(32)
-    EmailVerification.objects.create(
-        user=user, token_hash=hash_token(raw), expires_at=timezone.now() + TOKEN_TTL
-    )
-    return raw
-
-
-def confirm_email(raw_token: str) -> User:
-    record = EmailVerification.objects.filter(token_hash=hash_token(raw_token)).first()
-    if record is None or not record.is_usable:
-        raise DomainError("Verification link is invalid or expired.", code="invalid_token")
-
-    record.used_at = timezone.now()
-    record.save(update_fields=["used_at", "updated_at"])
-
-    user = record.user
-    if not user.email_verified:
-        user.email_verified = True
-        user.save(update_fields=["email_verified", "updated_at"])
-    return user
-
-
 def create_password_reset(user: User, ip=None) -> str:
     # Invalidate outstanding tokens so a stale link cannot be replayed later.
     PasswordResetToken.objects.filter(user=user, used_at__isnull=True).update(

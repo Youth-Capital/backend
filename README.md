@@ -31,6 +31,21 @@ The application pipeline publishes and scans an image, then updates infra;
 only infra deploys to the server. The old host-level nginx/systemd examples in
 `deploy` are historical references. Do not combine them with the Compose stack.
 
+Registration sends a six-digit email OTP using the existing SMTP configuration.
+Codes expire after 10 minutes, allow five failed guesses, and can be resent once
+per minute with a maximum of five sends per account per hour. Only the latest
+code works. The database stores a keyed hash, never a plaintext code. Delivery
+uses a 10-second SMTP socket timeout and reports failure without losing the
+pending account. No additional environment values or Resend SDK are required.
+
+Pending accounts receive a session limited to identity, email verification,
+resend and logout. Backend JWT authentication and signed-file access both block
+application access until the address is verified. Existing unverified accounts
+must verify too; no addresses are silently marked verified by migration. Old
+verification links are invalidated, and debug headers never return codes or
+tokens. The frontend `/auth/verify-email` screen resumes after reload/sign-in;
+verified learners continue to intake if it has not been completed.
+
 The release workflow runs three security scans, tests, build/publish, image
 scanning, infra deployment and final registry cleanup. PRs receive no production
 credentials. In this repo's `prod` environment, set the secret

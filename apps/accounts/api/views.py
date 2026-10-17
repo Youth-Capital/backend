@@ -1,7 +1,6 @@
 """Authentication endpoints."""
 
 from django.contrib.auth import authenticate
-from django.db import transaction
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -23,11 +22,15 @@ from ..authentication import (
     rotate_tokens,
     set_refresh_cookie,
 )
+from ..email_verification import (
+    confirm_verification_code,
+    ensure_verification_code,
+    send_verification_code,
+    verification_status,
+)
 from ..models import Consent, User
 from ..services import (
     change_password,
-    confirm_email,
-    create_email_verification,
     create_password_reset,
     grant_consent,
     register_user,
@@ -43,6 +46,7 @@ from .serializers import (
     PasswordResetRequestSerializer,
     RegisterSerializer,
     UserSerializer,
+    VerifyEmailCodeSerializer,
 )
 
 
@@ -61,7 +65,6 @@ class RegisterView(APIView):
     throttle_scope = "register"
 
     @extend_schema(request=RegisterSerializer, responses={201: dict}, tags=["auth"])
-    @transaction.atomic
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -85,17 +88,15 @@ class RegisterView(APIView):
             headline=data.get("headline", ""),
         )
 
-        token = create_email_verification(user)
         log_action(action=AuditAction.CREATE, obj=user, actor=user, note="registration")
 
         from apps.analytics.services import track
 
         track(user, "signed_up", {"role": user.role})
 
+        state = ensure_verification_code(user)
         response = _auth_response(user, status_code=status.HTTP_201_CREATED)
-        if request.headers.get("X-Debug-Return-Token") and __debug__:
-            # Dev convenience only; the console email backend already logs it.
-            response.data["email_verification_token"] = token
+        response.data["verification"] = state
         return response
 
 
@@ -143,6 +144,8 @@ class LoginView(APIView):
         remember_login_device(user, request)
 
         log_action(action=AuditAction.LOGIN, obj=user, actor=user)
+        if not user.email_verified:
+            ensure_verification_code(user)
         return _auth_response(user)
 
 
@@ -217,6 +220,7 @@ class LogoutView(APIView):
 
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
+    allow_unverified_email = True
 
     @extend_schema(responses={200: UserSerializer}, tags=["auth"])
     def get(self, request):
@@ -353,14 +357,37 @@ class PasswordResetConfirmView(APIView):
 
 
 class VerifyEmailView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes: list = []
+    permission_classes = [IsAuthenticated]
+    allow_unverified_email = True
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "email_verify"
 
-    @extend_schema(request=dict, responses={200: dict}, tags=["auth"])
+    @extend_schema(request=VerifyEmailCodeSerializer, responses={200: UserSerializer}, tags=["auth"])
     def post(self, request):
-        token = request.data.get("token", "")
-        user = confirm_email(token)
-        return Response({"email_verified": True, "email": user.email})
+        serializer = VerifyEmailCodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = confirm_verification_code(request.user, serializer.validated_data["code"])
+        return Response(UserSerializer(user).data)
+
+
+class EmailVerificationStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+    allow_unverified_email = True
+
+    @extend_schema(responses={200: dict}, tags=["auth"])
+    def get(self, request):
+        return Response(verification_status(request.user))
+
+
+class ResendEmailCodeView(APIView):
+    permission_classes = [IsAuthenticated]
+    allow_unverified_email = True
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "email_resend"
+
+    @extend_schema(request=None, responses={200: dict}, tags=["auth"])
+    def post(self, request):
+        return Response(send_verification_code(request.user))
 
 
 def _send_reset_email(user, token: str) -> None:

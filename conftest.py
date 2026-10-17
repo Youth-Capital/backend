@@ -81,7 +81,7 @@ def student(db, taxonomy):
     from apps.profiles.services import generate_youth_id
 
     user = User.objects.create_user(
-        email="student@test.uz", password="TestPass12345", role=Role.STUDENT
+        email="student@test.uz", password="TestPass12345", role=Role.STUDENT, email_verified=True
     )
     StudentProfile.objects.create(
         user=user,
@@ -101,7 +101,7 @@ def other_student(db, taxonomy):
     from apps.profiles.services import generate_youth_id
 
     user = User.objects.create_user(
-        email="other@test.uz", password="TestPass12345", role=Role.STUDENT
+        email="other@test.uz", password="TestPass12345", role=Role.STUDENT, email_verified=True
     )
     StudentProfile.objects.create(
         user=user, youth_id=generate_youth_id(), first_name="Other", last_name="Person"
@@ -114,7 +114,7 @@ def employer(db, taxonomy):
     from apps.profiles.models import EmployerProfile
 
     user = User.objects.create_user(
-        email="employer@test.uz", password="TestPass12345", role=Role.EMPLOYER
+        email="employer@test.uz", password="TestPass12345", role=Role.EMPLOYER, email_verified=True
     )
     EmployerProfile.objects.create(
         owner=user,
@@ -132,7 +132,7 @@ def other_employer(db):
     from apps.profiles.models import EmployerProfile
 
     user = User.objects.create_user(
-        email="rival@test.uz", password="TestPass12345", role=Role.EMPLOYER
+        email="rival@test.uz", password="TestPass12345", role=Role.EMPLOYER, email_verified=True
     )
     EmployerProfile.objects.create(
         owner=user, legal_name="Rival LLC", brand_name="RivalCo", slug="rivalco"

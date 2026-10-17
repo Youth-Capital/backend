@@ -140,7 +140,7 @@ def test_an_employer_without_a_company_sees_nothing(auth, db):
     from apps.common.enums import Role
 
     lone = User.objects.create_user(
-        email="nocompany@test.uz", password="TestPass12345", role=Role.EMPLOYER
+        email="nocompany@test.uz", password="TestPass12345", role=Role.EMPLOYER, email_verified=True
     )
     _test_with_key(employer=None, title="Platform-authored")
 

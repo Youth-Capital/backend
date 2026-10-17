@@ -187,7 +187,7 @@ def _link_holder(token: str, kind: str, pk):
         return None
     if claim.get("k") != kind or claim.get("o") != str(pk):
         return None
-    return User.objects.filter(pk=claim.get("u"), is_active=True).first()
+    return User.objects.filter(pk=claim.get("u"), is_active=True, email_verified=True).first()
 
 
 # ---------------------------------------------------------------------------

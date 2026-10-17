@@ -3,6 +3,8 @@ from rest_framework.routers import DefaultRouter
 
 from .admin_views import AdminUserViewSet, EmployerVerificationViewSet
 from .views import (
+    EmailVerificationStatusView,
+    ResendEmailCodeView,
     ChangePasswordView,
     ConsentView,
     LoginView,
@@ -38,5 +40,7 @@ urlpatterns = [
         name="password-reset-confirm",
     ),
     path("email/verify/", VerifyEmailView.as_view(), name="email-verify"),
+    path("email/verification/", EmailVerificationStatusView.as_view(), name="email-verification-status"),
+    path("email/resend/", ResendEmailCodeView.as_view(), name="email-resend"),
     path("", include(router.urls)),
 ]

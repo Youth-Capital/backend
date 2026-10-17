@@ -61,6 +61,10 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, trim_whitespace=False)
 
 
+class VerifyEmailCodeSerializer(serializers.Serializer):
+    code = serializers.RegexField(r"^[0-9]{6}$", min_length=6, max_length=6, write_only=True)
+
+
 class UserSerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(read_only=True)
     profile = serializers.SerializerMethodField()

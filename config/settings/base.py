@@ -272,6 +272,8 @@ REST_FRAMEWORK = {
         # so this rate is a flood stop, not the defence.
         "refresh": "60/min",
         "register": "10/hour",
+        "email_verify": "30/min",
+        "email_resend": "10/hour",
         "candidate_search": "60/min",
         "ai": "30/hour",
     },
@@ -311,6 +313,7 @@ AUTH_COOKIE_PATH = "/api/v1/auth/"
 #: whether a test belonged to the platform. Anything that needs to *test* for
 #: platform ownership uses `is_platform`, never this string.
 PLATFORM_NAME = "Youth Capital"
+EMAIL_TIMEOUT = 10
 
 SPECTACULAR_SETTINGS = {
     "TITLE": f"{PLATFORM_NAME} API",

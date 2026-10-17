@@ -10,7 +10,8 @@ never the string shown to a user. Requirement: docs/02-ARCHITECTURE.md §10.
 
 import logging
 
-from django.core.exceptions import PermissionDenied, ValidationError as DjangoValidationError
+from django.core.exceptions import PermissionDenied
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import Http404
 from rest_framework import exceptions as drf_exceptions
 from rest_framework.response import Response
@@ -66,7 +67,10 @@ _STATUS_CODES = {
 
 def api_exception_handler(exc, context):
     if isinstance(exc, DomainError):
-        return _envelope(exc.status_code, exc.code, exc.message, exc.details)
+        response = _envelope(exc.status_code, exc.code, exc.message, exc.details)
+        if exc.status_code == 429 and "retry_after" in exc.details:
+            response["Retry-After"] = str(exc.details["retry_after"])
+        return response
 
     if isinstance(exc, DjangoValidationError):
         exc = drf_exceptions.ValidationError(detail=list(exc.messages))

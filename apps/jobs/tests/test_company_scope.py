@@ -121,7 +121,7 @@ def test_an_employer_without_a_company_sees_nothing_rather_than_everything(
     from apps.common.enums import Role
 
     orphan = User.objects.create_user(
-        email="nocompany@test.uz", password="TestPass12345", role=Role.EMPLOYER
+        email="nocompany@test.uz", password="TestPass12345", role=Role.EMPLOYER, email_verified=True
     )
 
     response = auth(orphan).get(f"{VACANCIES_URL}?page_size=100")
