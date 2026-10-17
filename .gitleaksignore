@@ -3,3 +3,8 @@ fa633a657828dfd01596462ead5c24d0884a2969:apps/accounts/tests/test_registration_c
 # Historical empty AUTH_COOKIE_DOMAIN followed by AXES_FAILURE_LIMIT:
 # the generic rule incorrectly joins these environment lines into a secret.
 be82755804b41df6624bc6bda2300987305fbe18:.env.example:generic-api-key:34
+# Historical OTP test payloads: synthetic passwords, never server credentials.
+# Exact commit/file/line fingerprints only; current tests use the shared dummy.
+1e668c2c9a07d9c7f27deee13761cd2ef274912f:apps/accounts/tests/test_email_otp.py:generic-api-key:32
+1e668c2c9a07d9c7f27deee13761cd2ef274912f:apps/accounts/tests/test_email_otp.py:generic-api-key:184
+1e668c2c9a07d9c7f27deee13761cd2ef274912f:apps/accounts/tests/test_email_otp.py:generic-api-key:193

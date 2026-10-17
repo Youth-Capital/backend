@@ -29,7 +29,7 @@ STATUS = "/api/v1/auth/email/verification/"
 
 def register(api, **headers):
     return api.post("/api/v1/auth/register/", {
-        "email": "otp.learner@example.com", "password": "QA-strong-passphrase-42",
+        "email": "otp.learner@example.com", "password": "TestPass12345",
         "role": "STUDENT", "preferred_language": "en", "birth_date": "2000-01-01",
         "first_name": "QA", "consents": ["TERMS", "PRIVACY", "DATA_PROCESSING"],
     }, format="json", **headers)
@@ -181,7 +181,7 @@ def test_refresh_of_pending_session_does_not_unlock_application(api, pending):
 
 
 def test_login_resumes_pending_verification_without_duplicate_email(api, pending):
-    response = api.post("/api/v1/auth/login/", {"email": pending.email, "password": "QA-strong-passphrase-42"}, format="json")
+    response = api.post("/api/v1/auth/login/", {"email": pending.email, "password": "TestPass12345"}, format="json")
     assert response.status_code == 200
     assert response.data["user"]["email_verified"] is False
     assert len(mail.outbox) == 1
@@ -190,7 +190,7 @@ def test_login_resumes_pending_verification_without_duplicate_email(api, pending
 def test_login_sends_a_fresh_code_after_expiry(api, pending):
     age_sends(pending)
     pending.email_verifications.update(expires_at=timezone.now() - timedelta(seconds=1))
-    response = api.post("/api/v1/auth/login/", {"email": pending.email, "password": "QA-strong-passphrase-42"}, format="json")
+    response = api.post("/api/v1/auth/login/", {"email": pending.email, "password": "TestPass12345"}, format="json")
     assert response.status_code == 200
     assert len(mail.outbox) == 2
 
