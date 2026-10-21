@@ -175,7 +175,14 @@ def billing_configured() -> bool:
 
     Once a single plan exists the gate enforces strictly, so this cannot be
     used to dodge a limit in a configured deployment.
+
+    `settings.BILLING_ENABLED` comes first: while paid plans are switched off
+    for launch, the platform is free outright, whatever the catalogue holds.
     """
+    from django.conf import settings
+
+    if not settings.BILLING_ENABLED:
+        return False
     return Plan.objects.filter(is_active=True).exists()
 
 

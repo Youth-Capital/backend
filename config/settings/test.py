@@ -81,3 +81,7 @@ REST_FRAMEWORK = {  # noqa: F405
 }
 
 TRUSTED_PROXY_COUNT = 0
+
+# The billing suite tests the paywall itself, so tests run with it on. The
+# launch default (off) is covered on its own in apps/billing/tests.
+BILLING_ENABLED = True

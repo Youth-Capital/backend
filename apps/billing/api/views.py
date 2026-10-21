@@ -5,6 +5,7 @@ the requesting user — there is deliberately no way to read another account's
 subscription, usage or payments through this API.
 """
 
+from django.conf import settings
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -33,6 +34,20 @@ from .serializers import (
 )
 
 
+def _billing_off() -> Response | None:
+    """The answer to anything that would sell a plan while paid plans are off.
+
+    Not a 404 dressed as "unknown plan": the client is told plainly that
+    nothing is for sale, so the page can say so instead of an error.
+    """
+    if settings.BILLING_ENABLED:
+        return None
+    return Response(
+        {"detail": "Paid plans are not available yet.", "code": "billing_disabled"},
+        status=status.HTTP_404_NOT_FOUND,
+    )
+
+
 class PlanListView(APIView):
     """Public pricing. Optionally filtered to one role."""
 
@@ -41,6 +56,10 @@ class PlanListView(APIView):
 
     @extend_schema(responses=PlanSerializer(many=True))
     def get(self, request):
+        # Empty while paid plans are off, so the landing has nothing to price
+        # and hides the section instead of advertising a plan nobody can buy.
+        if not settings.BILLING_ENABLED:
+            return Response([])
         plans = Plan.objects.filter(is_active=True)
         role = request.query_params.get("role")
         if role:
@@ -126,6 +145,8 @@ class CheckoutView(APIView):
         },
     )
     def post(self, request):
+        if (refused := _billing_off()) is not None:
+            return refused
         payload = CheckoutRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
 
@@ -164,6 +185,8 @@ class ConfirmView(APIView):
 
     @extend_schema(request=ConfirmRequestSerializer, responses=PaymentSerializer)
     def post(self, request):
+        if (refused := _billing_off()) is not None:
+            return refused
         payload = ConfirmRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         reference = payload.validated_data["reference"]

@@ -102,6 +102,233 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             )
 
     @extend_schema(request=None, responses={200: AdminUserSerializer})
+    @extend_schema(responses={200: dict})
+    @action(detail=True, methods=["get"])
+    def overview(self, request, pk=None):
+        """Everything the platform holds about one person, in one place.
+
+        The list answers "who is on the platform"; this answers "who is this".
+        An administrator handling a support request, a complaint or a
+        verification should not have to open six screens and join them in their
+        head.
+
+        WHAT IS NOT HERE, AND CANNOT BE
+
+        The password. Not because it is withheld — because it does not exist.
+        What the account stores is an Argon2id hash: the password is run
+        through a one-way function with a per-account salt, and the result is
+        all that is kept. It can confirm a password typed at sign-in and it
+        cannot produce one. The hash itself is deliberately not returned
+        either: handed to anyone it becomes material for an offline guessing
+        run against the one secret the account holder controls.
+
+        An administrator who needs to get somebody back into their account
+        issues a reset rather than reading a secret.
+
+        LOOKING IS AN EVENT
+
+        Opening this writes an audit entry. The platform holds the records of
+        minors, and "who read this person's file, and when" is a question that
+        has to have an answer. `PII_ACCESS` exists in the audit vocabulary for
+        exactly this.
+        """
+        from apps.assessment.models import AttemptStatus, TestAttempt
+        from apps.billing.models import Subscription
+        from apps.experience.models import Experience
+        from apps.learning.models import Certificate, Enrollment, EnrollmentStatus
+        from apps.profiles.models import UserSkill
+
+        from apps.audit.models import AuditLog
+
+        from ..models import Consent, LoginDevice
+
+        user = self.get_object()
+
+        log_action(
+            action=AuditAction.PII_ACCESS,
+            obj=user,
+            object_repr=user.email,
+            actor=request.user,
+            note="Administrator opened the full user record.",
+            severity=AuditSeverity.NOTICE,
+        )
+
+        skills = list(
+            UserSkill.objects.filter(user=user)
+            .select_related("skill")
+            .order_by("-proficiency")[:40]
+        )
+        enrollments = list(
+            Enrollment.objects.filter(user=user).select_related("course")[:40]
+        )
+        attempts = list(
+            TestAttempt.objects.filter(user=user).select_related("test").order_by(
+                "-created_at"
+            )[:20]
+        )
+        subscription = Subscription.objects.filter(user=user).select_related("plan").first()
+        profile = getattr(user, "student_profile", None)
+        company = getattr(user, "employer_profile", None)
+
+        return Response(
+            {
+                "account": {
+                    "id": str(user.id),
+                    "email": user.email,
+                    "email_verified": user.email_verified,
+                    "phone": user.phone,
+                    "role": user.role,
+                    "display_name": user.display_name,
+                    "preferred_language": user.preferred_language,
+                    "is_active": user.is_active,
+                    "is_superuser": user.is_superuser,
+                    "date_joined": user.date_joined,
+                    "last_login": user.last_login,
+                    "last_login_ip": user.last_login_ip,
+                    # Stated rather than omitted: an administrator looking for
+                    # the password should find out here why there is none.
+                    "password": "not stored — Argon2id hash only, cannot be read back",
+                },
+                "profile": (
+                    {
+                        "full_name": profile.full_name,
+                        "youth_id": profile.youth_id,
+                        "birth_date": profile.birth_date,
+                        "age": profile.age,
+                        "is_minor": profile.is_minor,
+                        "region": profile.region.name if profile.region else None,
+                        "city": profile.city,
+                        "education_status": profile.education_status,
+                        "employment_status": profile.employment_status,
+                        "target_profession": (
+                            profile.target_profession.name
+                            if profile.target_profession_id
+                            else None
+                        ),
+                        "profile_completion": profile.profile_completion,
+                        "languages": profile.languages,
+                        "avatar": profile.avatar.url if profile.avatar else None,
+                    }
+                    if profile
+                    else None
+                ),
+                "company": (
+                    {
+                        "display_name": company.display_name,
+                        "legal_name": company.legal_name,
+                        "tax_id": company.tax_id,
+                        "industry": company.industry,
+                        "website": company.website,
+                        "verification_status": company.verification_status,
+                    }
+                    if company
+                    else None
+                ),
+                "skills": {
+                    "total": len(skills),
+                    "verified": sum(1 for s in skills if s.is_verified),
+                    "items": [
+                        {
+                            "name": s.skill.name,
+                            "proficiency": s.proficiency,
+                            "verified": s.is_verified,
+                            "band": s.band,
+                        }
+                        for s in skills
+                    ],
+                },
+                "learning": {
+                    "enrolled": len(enrollments),
+                    "completed": sum(
+                        1 for e in enrollments if e.status == EnrollmentStatus.COMPLETED
+                    ),
+                    "courses": [
+                        {
+                            "title": e.course.title,
+                            "status": e.status,
+                            "progress": e.progress,
+                        }
+                        for e in enrollments
+                    ],
+                    "certificates": [
+                        {"title": c.course.title, "serial": c.serial, "issued_at": c.issued_at}
+                        for c in Certificate.objects.filter(user=user).select_related(
+                            "course"
+                        )[:20]
+                    ],
+                },
+                "assessment": {
+                    "attempts": len(attempts),
+                    "passed": sum(
+                        1 for a in attempts if a.status == AttemptStatus.PASSED
+                    ),
+                    "items": [
+                        {
+                            "test": a.test.title,
+                            "status": a.status,
+                            "score": a.score,
+                            "taken_at": a.created_at,
+                        }
+                        for a in attempts
+                    ],
+                },
+                "experience": [
+                    {
+                        "title": e.title,
+                        "organization": e.organization,
+                        "type": e.type,
+                        "months": e.duration_months,
+                        "verification_status": e.verification_status,
+                    }
+                    for e in Experience.objects.filter(user=user)[:20]
+                ],
+                "billing": (
+                    {
+                        "plan": subscription.plan.code,
+                        "status": subscription.status,
+                        "period_start": subscription.current_period_start,
+                        "period_end": subscription.current_period_end,
+                    }
+                    if subscription
+                    else None
+                ),
+                "consents": [
+                    {
+                        "type": c.type,
+                        "version": c.version,
+                        "granted": c.granted,
+                        "granted_at": c.granted_at,
+                        "revoked_at": c.revoked_at,
+                    }
+                    for c in Consent.objects.filter(user=user)
+                ],
+                "devices": [
+                    {
+                        "browser": d.browser,
+                        "system": d.system,
+                        "kind": d.kind,
+                        "last_ip": d.last_ip,
+                        "last_seen_at": d.last_seen_at,
+                    }
+                    for d in LoginDevice.objects.filter(user=user).order_by(
+                        "-last_seen_at"
+                    )[:10]
+                ],
+                "recent_activity": [
+                    {
+                        "action": entry.action,
+                        "object_type": entry.object_type,
+                        "object_repr": entry.object_repr,
+                        "created_at": entry.created_at,
+                        "ip": entry.ip,
+                    }
+                    for entry in AuditLog.objects.filter(actor=user).order_by(
+                        "-created_at"
+                    )[:20]
+                ],
+            }
+        )
+
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
         user = self.get_object()

@@ -6,9 +6,10 @@ from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from apps.common.permissions import IsOwnerOrAdmin
+from apps.common.permissions import IsOwnerOrAdmin, IsStudent
 from apps.common.exceptions import DomainError
 
 from ..models import CVDocument, PortfolioItem, PublicProfile
@@ -102,6 +103,24 @@ class CVViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     serializer_class = CVDocumentSerializer
 
+    #: Read by ScopedRateThrottle, which is attached to the drafting action
+    #: only — see `get_throttles`. A model-backed call belongs on the same
+    #: budget as the rest of them rather than on the ordinary per-user rate.
+    throttle_scope = "ai"
+
+    def get_permissions(self):
+        if self.action == "draft":
+            # A CV is a student's document, and the draft is written from a
+            # student's record. There is nothing for an employer account to
+            # draft, so this says so rather than returning an empty one.
+            return [IsAuthenticated(), IsStudent()]
+        return super().get_permissions()
+
+    def get_throttles(self):
+        if self.action == "draft":
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
+
     def get_queryset(self):
         return CVDocument.objects.filter(user=self.request.user)
 
@@ -147,6 +166,51 @@ class CVViewSet(viewsets.ModelViewSet):
         return Response(refresh_cv_rating(self.get_object()))
 
     @extend_schema(responses={200: dict})
+    @extend_schema(
+        request=None,
+        responses={200: dict},
+        description=(
+            "A first draft of the headline and summary, written from the "
+            "student's own skills, experience and finished courses. Nothing is "
+            "saved: the draft comes back as text for the form."
+        ),
+    )
+    @action(detail=False, methods=["post"])
+    def draft(self, request):
+        """Have the assistant write the opening, instead of writing it yourself.
+
+        A draft, never a document. The student sees the sentences in the same
+        form they would have typed into, and nothing reaches the database until
+        they press save — which is the difference between a tool and something
+        filing papers under their name.
+        """
+        from apps.billing.enums import Feature as BillingFeature
+        from apps.billing.services import consume
+        from apps.taxonomy.models import Profession
+
+        from ..composer import draft_cv
+
+        # Metered like every other model-backed capability: a draft is a round
+        # trip once a provider is configured, and the quota is what keeps one
+        # account from spending the platform's budget.
+        consume(request.user, BillingFeature.CV_ANALYSIS)
+
+        profession = None
+        requested = request.data.get("profession")
+        if requested:
+            profession = Profession.objects.filter(id=requested).first()
+        if profession is None:
+            profile = getattr(request.user, "student_profile", None)
+            profession = getattr(profile, "target_profession", None)
+
+        return Response(
+            draft_cv(
+                request.user,
+                profession=profession,
+                language=request.data.get("language") or request.user.preferred_language,
+            )
+        )
+
     @action(detail=True, methods=["get"])
     def suggestions(self, request, pk=None):
         """AI suggestions for improving this CV (prompt §13, CV AI)."""

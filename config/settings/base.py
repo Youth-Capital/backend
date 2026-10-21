@@ -499,6 +499,13 @@ LOGGING = {
 
 
 # ---------------------------------------------------------------- billing
+# The one switch for paid plans. Off for launch: the platform is free while it
+# gathers its first users, so there are no limits, no pricing on the landing
+# and no "Plan" page anywhere. Everything below — plans, quotas, gateways —
+# stays built and tested, and setting BILLING_ENABLED=True in the environment
+# brings all of it back at once.
+BILLING_ENABLED = env.bool("BILLING_ENABLED", default=False)
+
 # Which gateway settles money. "manual" needs no credentials and is what the
 # demo runs on; swap to "stripe" (or a dotted path to a local gateway) once
 # keys exist. Never hardcode a key here — these read from the environment.

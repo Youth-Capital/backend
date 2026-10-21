@@ -69,6 +69,9 @@ class UserSerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(read_only=True)
     profile = serializers.SerializerMethodField()
     requires_guardian_approval = serializers.SerializerMethodField()
+    #: Whether paid plans exist right now. The SPA hides the "Plan" page,
+    #: upgrade prompts and the plan card while this is false.
+    billing_enabled = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -84,6 +87,7 @@ class UserSerializer(serializers.ModelSerializer):
             "date_joined",
             "profile",
             "requires_guardian_approval",
+            "billing_enabled",
         ]
         read_only_fields = [
             "id",
@@ -92,6 +96,11 @@ class UserSerializer(serializers.ModelSerializer):
             "phone_verified",
             "date_joined",
         ]
+
+    def get_billing_enabled(self, user) -> bool:
+        from django.conf import settings
+
+        return bool(settings.BILLING_ENABLED)
 
     def get_profile(self, user) -> dict | None:
         """A compact profile stub so the SPA can render the shell immediately."""
