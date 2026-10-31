@@ -16,6 +16,7 @@ dependencies = [
     "argon2-cffi==25.1.0",
     "django-axes==8.0.0",
     "Pillow==13.0.0",
+    "fpdf2==2.8.9",
     "python-dateutil==2.9.0.post0",
     "anthropic==1.13.0",
     "gunicorn==26.2.0",

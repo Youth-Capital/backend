@@ -1,6 +1,10 @@
 """CV, portfolio and Youth Passport endpoints (prompt §10)."""
 
+from io import BytesIO
+
+from django.http import FileResponse
 from django.utils.text import slugify
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
@@ -13,6 +17,7 @@ from apps.common.permissions import IsOwnerOrAdmin, IsStudent
 from apps.common.exceptions import DomainError
 
 from ..models import CVDocument, PortfolioItem, PublicProfile
+from ..pdf import render_cv_pdf, suggest_filename
 from ..rating import refresh_cv_rating
 from ..services import build_cv_payload
 
@@ -117,7 +122,10 @@ class CVViewSet(viewsets.ModelViewSet):
         return super().get_permissions()
 
     def get_throttles(self):
-        if self.action == "draft":
+        if self.action in ("draft", "export"):
+            # ScopedRateThrottle reads the scope off the view, so each action
+            # names its own here rather than sharing the class attribute.
+            self.throttle_scope = "ai" if self.action == "draft" else "cv_export"
             return [ScopedRateThrottle()]
         return super().get_throttles()
 
@@ -153,6 +161,31 @@ class CVViewSet(viewsets.ModelViewSet):
         fresh, so a CV can never drift out of date.
         """
         return Response(build_cv_payload(self.get_object()))
+
+    @extend_schema(
+        responses={(200, "application/pdf"): OpenApiTypes.BINARY},
+        description=(
+            "The CV as a PDF file, assembled from the profile at the moment "
+            "of the request. Sections follow the document's own configuration."
+        ),
+    )
+    @action(detail=True, methods=["get"])
+    def export(self, request, pk=None):
+        """The CV as a file, because an application form asks for one.
+
+        Built on demand rather than stored: the payload behind it is assembled
+        live, so a file saved yesterday and one downloaded now would differ,
+        and the stale one is the wrong answer. Generating it each time costs a
+        few hundred milliseconds and keeps the document honest.
+        """
+        cv = self.get_object()
+        payload = build_cv_payload(cv)
+        return FileResponse(
+            BytesIO(render_cv_pdf(payload, language=cv.language)),
+            as_attachment=True,
+            filename=suggest_filename(payload),
+            content_type="application/pdf",
+        )
 
     @extend_schema(responses={200: dict})
     @action(detail=True, methods=["get"])

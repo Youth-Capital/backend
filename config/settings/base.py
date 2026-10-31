@@ -276,6 +276,9 @@ REST_FRAMEWORK = {
         "email_resend": "10/hour",
         "candidate_search": "60/min",
         "ai": "30/hour",
+        # Building a PDF costs real CPU, so the file export gets its own,
+        # tighter budget than the 300/min a read endpoint may have.
+        "cv_export": "20/min",
     },
     "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
 }
