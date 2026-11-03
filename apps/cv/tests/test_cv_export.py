@@ -18,6 +18,8 @@ from datetime import date
 import pytest
 
 from apps.cv.models import CVDocument
+from django.utils.translation import override
+
 from apps.cv.pdf import (
     LABELS,
     LANGUAGE_LEVELS,
@@ -25,6 +27,7 @@ from apps.cv.pdf import (
     _period,
     _recent_first,
     _year,
+    contact_line,
     render_cv_pdf,
     skill_annotation,
     suggest_filename,
@@ -199,6 +202,93 @@ def test_a_single_year_is_not_printed_twice():
 def test_a_missing_date_renders_as_nothing_rather_than_as_none():
     assert _year(None) == ""
     assert _period({}, {"present": "present"}) == ""
+
+
+# ---------------------------------------------------------------------------
+# The document is written in one language, and it is the document's own
+# ---------------------------------------------------------------------------
+def test_the_payload_is_assembled_in_the_documents_language(
+    student, taxonomy, give_skill, cv
+):
+    """Headings follow the document, so everything it names must follow too.
+
+    Before this, the labels came from the document and the taxonomy came from
+    the request, so a Russian CV opened from an Uzbek interface named its
+    region in Russian and its skills in Uzbek.
+    """
+    taxonomy["region"].name_ru = "город Ташкент"
+    taxonomy["region"].save(update_fields=["name_ru"])
+    taxonomy["sql"].name_ru = "Базы данных"
+    taxonomy["sql"].save(update_fields=["name_ru"])
+    give_skill(student, taxonomy["sql"], 65)
+
+    cv.language = "ru"
+    cv.save(update_fields=["language"])
+
+    # The request is being made in Uzbek; the document is not.
+    with override("uz"):
+        payload = build_cv_payload(cv)
+
+    assert payload["personal"]["region"] == "город Ташкент"
+    assert [s["name"] for s in payload["skills"]] == ["Базы данных"]
+
+
+def test_an_uzbek_document_keeps_its_uzbek_names(student, taxonomy, give_skill, cv):
+    taxonomy["region"].name_ru = "город Ташкент"
+    taxonomy["region"].save(update_fields=["name_ru"])
+    give_skill(student, taxonomy["sql"], 65)
+
+    cv.language = "uz"
+    cv.save(update_fields=["language"])
+
+    with override("ru"):
+        payload = build_cv_payload(cv)
+
+    assert payload["personal"]["region"] == "Toshkent"
+
+
+def test_the_language_choice_reaches_the_file(auth, student, cv):
+    cv.language = "en"
+    cv.save(update_fields=["language"])
+
+    response = auth(student).get(url_for(cv))
+
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content).startswith(b"%PDF-")
+
+
+# ---------------------------------------------------------------------------
+# One place, not the same place twice
+# ---------------------------------------------------------------------------
+def test_the_city_the_student_typed_wins_over_the_taxonomy_region():
+    """Both printed gave "Toshkent · город Ташкент" — one place, two
+    languages, reading as two."""
+    line = contact_line(
+        {"city": "Toshkent", "region": "город Ташкент"}, {}, LABELS["ru"]
+    )
+
+    assert line == "Toshkent"
+
+
+def test_the_region_stands_in_when_no_city_was_given():
+    line = contact_line({"city": "", "region": "город Ташкент"}, {}, LABELS["ru"])
+
+    assert line == "город Ташкент"
+
+
+def test_an_absent_field_leaves_no_stranded_separator():
+    line = contact_line(
+        {"city": "Toshkent", "youth_id": None}, {"email": "a@b.uz"}, LABELS["ru"]
+    )
+
+    assert line == "a@b.uz  ·  Toshkent"
+    assert not line.startswith("·") and not line.endswith("·")
+
+
+def test_the_youth_id_is_labelled_so_a_reader_knows_what_it_is():
+    line = contact_line({"youth_id": "YK-2026-77355F"}, {}, LABELS["ru"])
+
+    assert line == "Youth ID YK-2026-77355F"
 
 
 # ---------------------------------------------------------------------------

@@ -397,21 +397,36 @@ class _Writer:
         self.pdf.ln(height)
 
 
+def contact_line(personal: dict, contacts: dict, labels: dict[str, str]) -> str:
+    """Everything needed to reach or identify the person, on one line.
+
+    Absent fields drop out rather than leaving stranded separators behind them.
+
+    One place, never two. The city is free text the student typed and the
+    region is a taxonomy row, so printing both produced "Toshkent, город
+    Ташкент" — the same place, twice, in two languages, which translating
+    either one would not have fixed. The student's own wording wins; the region
+    stands in only when they left the field empty.
+    """
+    place = personal.get("city") or personal.get("region") or ""
+    youth_id = personal.get("youth_id")
+    parts = [
+        contacts.get("email") or "",
+        contacts.get("phone") or "",
+        place,
+        f"{labels['youth_id']} {youth_id}" if youth_id else "",
+    ]
+    return "  ·  ".join(p for p in parts if p)
+
+
 def _render_header(writer: _Writer, payload: dict) -> None:
     pdf, labels = writer.pdf, writer.labels
     personal = payload.get("personal") or {}
     contacts = payload.get("contacts") or {}
 
-    pdf.set_font(FONT_FAMILY, "B", 7.5)
-    pdf.set_text_color(*MUTED)
-    pdf.cell(
-        CONTENT_WIDTH,
-        4,
-        text=sanitise(labels["document"]).upper(),
-        new_x=XPos.LMARGIN,
-        new_y=YPos.NEXT,
-    )
-
+    # No "CURRICULUM VITAE" label above the name. It is a conservative Russian
+    # convention and the document is already recognisable as what it is; the
+    # international guidance this layout follows opens on the person instead.
     name = personal.get("full_name") or (payload.get("meta") or {}).get("title") or ""
     pdf.set_font(FONT_FAMILY, "B", 20)
     pdf.set_text_color(*INK)
@@ -433,17 +448,7 @@ def _render_header(writer: _Writer, payload: dict) -> None:
             new_y=YPos.NEXT,
         )
 
-    # Everything needed to reach or identify the person, on one line. Absent
-    # fields drop out rather than leaving stranded separators.
-    place = ", ".join(p for p in (personal.get("city"), personal.get("region")) if p)
-    youth_id = personal.get("youth_id")
-    parts = [
-        contacts.get("email") or "",
-        contacts.get("phone") or "",
-        place,
-        f"{labels['youth_id']} {youth_id}" if youth_id else "",
-    ]
-    line = "  ·  ".join(p for p in parts if p)
+    line = contact_line(personal, contacts, labels)
     if line:
         pdf.ln(0.8)
         pdf.set_font(FONT_FAMILY, "", NOTE_SIZE)

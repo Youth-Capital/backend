@@ -9,6 +9,7 @@ is assembled on demand.
 from __future__ import annotations
 
 from django.conf import settings
+from django.utils.translation import override
 
 from apps.experience.models import Experience
 from apps.learning.models import Certificate, Enrollment, EnrollmentStatus
@@ -26,7 +27,19 @@ def build_cv_payload(cv: CVDocument, *, identified: bool = True) -> dict:
     their capability, which is the part talent search is allowed to see. The
     same rule the candidate card uses, applied to the same data, so the two
     cannot disagree.
+
+    The whole assembly runs in the document's own language. Every translatable
+    label it reaches — the region, a skill, its category — resolves through the
+    *active* language, which is otherwise whatever the request was made in. A
+    CV written in Russian and downloaded from an Uzbek interface therefore came
+    out with its region named in one language and the student's own city in the
+    other, which reads as the same place printed twice.
     """
+    with override(cv.language):
+        return _assemble(cv, identified=identified)
+
+
+def _assemble(cv: CVDocument, *, identified: bool = True) -> dict:
     user = cv.user
     profile = getattr(user, "student_profile", None)
     sections = cv.enabled_sections
