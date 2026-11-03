@@ -57,6 +57,13 @@ CONTENT_WIDTH = PAGE_WIDTH - MARGIN_LEFT - MARGIN_RIGHT
 #: period on the page starts at the same x and the column can be read down.
 DATE_WIDTH = 42.0
 
+#: The skills column carries more than a date does — a score over its
+#: denominator and, when earned, the word that says it was verified.
+SKILL_WIDTH = 54.0
+
+#: The top of the proficiency scale, from ProficiencyBand's 0-100.
+SKILL_SCALE_MAX = 100
+
 # Print colours. The page is white paper, so the Aurora Glass tokens do not
 # apply: ink is near-black rather than black, which is as harsh on paper as it
 # is on a screen, and the one accent is the platform's deep violet — dark
@@ -309,17 +316,17 @@ class _Writer:
             pdf.cell(DATE_WIDTH, 5.2, text=sanitise(period), align="R")
         pdf.ln(5.2)
 
-    def row(self, left: str, right: str = "") -> None:
+    def row(self, left: str, right: str = "", *, right_width: float = DATE_WIDTH) -> None:
         """A plain two-part line, for skills and languages."""
         pdf = self.pdf
-        width = CONTENT_WIDTH - (DATE_WIDTH if right else 0)
+        width = CONTENT_WIDTH - (right_width if right else 0)
         pdf.set_font(FONT_FAMILY, "", BODY_SIZE)
         pdf.set_text_color(*INK)
         pdf.cell(width, LINE, text=sanitise(left))
         if right:
             pdf.set_font(FONT_FAMILY, "", NOTE_SIZE)
             pdf.set_text_color(*MUTED)
-            pdf.cell(DATE_WIDTH, LINE, text=sanitise(right), align="R")
+            pdf.cell(right_width, LINE, text=sanitise(right), align="R")
         pdf.ln(LINE)
 
     def note(self, text: str) -> None:
@@ -468,13 +475,31 @@ def _render_education(writer: _Writer, payload: dict) -> None:
         writer.gap()
 
 
+def skill_annotation(skill: dict, labels: dict[str, str]) -> str:
+    """What is printed to the right of a skill.
+
+    The score is kept — it is the thing this platform exists to produce, and a
+    CV that drops it throws away its own evidence. But it is printed over its
+    denominator rather than alone: "65" means nothing to a reader who has never
+    seen this scale, while "65 / 100" means something to everyone, and no key
+    has to be printed anywhere for it. The verified mark stays beside it,
+    because that is the half an employer cannot get from a candidate's own
+    account of themselves.
+    """
+    score = skill.get("proficiency")
+    parts = [] if score is None else [f"{score} / {SKILL_SCALE_MAX}"]
+    if skill.get("verified"):
+        parts.append(labels["verified"])
+    return "  ·  ".join(parts)
+
+
 def _render_skills(writer: _Writer, payload: dict) -> None:
     for skill in payload.get("skills") or []:
-        score = skill.get("proficiency")
-        right = "" if score is None else str(score)
-        if skill.get("verified"):
-            right = f"{right}  ·  {writer.labels['verified']}".strip()
-        writer.row(skill.get("name") or "", right)
+        writer.row(
+            skill.get("name") or "",
+            skill_annotation(skill, writer.labels),
+            right_width=SKILL_WIDTH,
+        )
 
 
 def _render_experience(writer: _Writer, payload: dict) -> None:

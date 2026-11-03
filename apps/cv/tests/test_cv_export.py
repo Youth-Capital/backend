@@ -19,11 +19,14 @@ import pytest
 
 from apps.cv.models import CVDocument
 from apps.cv.pdf import (
+    LABELS,
     LANGUAGE_LEVELS,
+    SKILL_SCALE_MAX,
     _period,
     _recent_first,
     _year,
     render_cv_pdf,
+    skill_annotation,
     suggest_filename,
 )
 from apps.cv.services import build_cv_payload
@@ -196,6 +199,38 @@ def test_a_single_year_is_not_printed_twice():
 def test_a_missing_date_renders_as_nothing_rather_than_as_none():
     assert _year(None) == ""
     assert _period({}, {"present": "present"}) == ""
+
+
+# ---------------------------------------------------------------------------
+# The score is kept, and printed so that it can be read
+# ---------------------------------------------------------------------------
+def test_a_score_is_printed_over_its_denominator():
+    """A bare "65" asks the reader to know a scale they have never seen."""
+    annotation = skill_annotation({"proficiency": 65}, LABELS["ru"])
+
+    assert annotation == f"65 / {SKILL_SCALE_MAX}"
+
+
+def test_a_verified_skill_says_so_beside_its_score():
+    annotation = skill_annotation({"proficiency": 65, "verified": True}, LABELS["ru"])
+
+    assert annotation == "65 / 100  ·  подтверждён"
+
+
+def test_an_unverified_skill_claims_nothing():
+    annotation = skill_annotation({"proficiency": 40, "verified": False}, LABELS["ru"])
+
+    assert LABELS["ru"]["verified"] not in annotation
+
+
+def test_a_zero_score_is_still_printed_rather_than_blanked():
+    """Zero is a measurement, and hiding it would make the row read as missing
+    data instead of as a skill the platform has not yet seen evidence for."""
+    assert skill_annotation({"proficiency": 0}, LABELS["ru"]) == "0 / 100"
+
+
+def test_a_skill_with_no_score_leaves_the_column_empty():
+    assert skill_annotation({}, LABELS["ru"]) == ""
 
 
 # ---------------------------------------------------------------------------
