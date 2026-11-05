@@ -13,6 +13,10 @@ supported. No PostgreSQL administrator password belongs in application runtime.
 The existing shared Caddy edge serves the domain; follow infra's rollout runbook
 for data transfer, Cloudflare Full (strict), and HTTP-01 issuance. Starting the
 backend still runs migrations, so deployment requires operator approval.
+For a source-only push to main, include `[no deploy]` in the head commit message.
+Security checks, tests, image publication and image scanning still run; the
+automatic infra promotion is held. Approved manual releases retain the existing
+`publish_only` workflow input.
 
 This repository builds its production image with the root `Dockerfile` and
 `entrypoint.sh`. Python packages are managed by **uv 0.13.0** using `pyproject.toml`
