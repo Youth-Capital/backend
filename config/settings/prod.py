@@ -36,10 +36,10 @@ BILLING_MANUAL_AUTO_CONFIRM = False
 
 # --- The proxy in front of us -------------------------------------------
 #
-# One host-installed Caddy proxy. It overwrites X-Forwarded-For with the
-# connection's client address and forwards the original HTTPS scheme. Gunicorn
-# binds 0.0.0.0 inside its container; Docker publishes port 8000 on host loopback
-# only. Change this count only alongside the corresponding edge configuration.
+# One shared edge Caddy proxy. It overwrites X-Forwarded-For with the verified
+# client address and forwards the original HTTPS scheme over youthcapital_edge.
+# Loopback port 8000 remains available for host readiness probes. Change this
+# count only alongside the corresponding edge configuration.
 TRUSTED_PROXY_COUNT = env.int("TRUSTED_PROXY_COUNT", default=1)
 
 # Re-stated rather than inherited, because the dictionary in base.py captured

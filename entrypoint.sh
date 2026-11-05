@@ -9,7 +9,13 @@ fi
 
 : "${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY is required}"
 : "${DJANGO_ALLOWED_HOSTS:?DJANGO_ALLOWED_HOSTS is required}"
-: "${DATABASE_URL:?DATABASE_URL is required}"
+if [ -z "${DATABASE_URL:-}" ]; then
+    : "${DB_HOST:?DB_HOST is required}"
+    : "${DB_PORT:?DB_PORT is required}"
+    : "${DB_NAME:?DB_NAME is required}"
+    : "${DB_USER:?DB_USER is required}"
+    : "${POSTGRES_PASSWORD:?Application database password is required}"
+fi
 : "${REDIS_URL:?REDIS_URL is required}"
 : "${FRONTEND_URL:?FRONTEND_URL is required}"
 : "${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}"

@@ -1,8 +1,18 @@
 # Production deployment
 
 The production runbook, Docker Compose stack, HTTPS/HTTP3 proxy and Ubuntu
-bootstrap are maintained in [Youth-Capital/infra](https://github.com/Youth-Capital/infra).
+storage preparation are maintained in [Youth-Capital/infra](https://github.com/Youth-Capital/infra).
 Only the infra repository connects to the server.
+
+The dedicated host uses shared PostgreSQL with the verified application database
+`yoshlar_kapitali_db` and role `yoshlar_kapitali_user`. Production reads `DB_HOST`,
+`DB_PORT`, `DB_NAME`, `DB_USER` and the application-role `POSTGRES_PASSWORD`.
+The infra renderer also supplies `DATABASE_URL` for older images. Explicit DB
+settings take precedence; existing URL/POSTGRES_* development settings remain
+supported. No PostgreSQL administrator password belongs in application runtime.
+The existing shared Caddy edge serves the domain; follow infra's rollout runbook
+for data transfer, Cloudflare Full (strict), and HTTP-01 issuance. Starting the
+backend still runs migrations, so deployment requires operator approval.
 
 This repository builds its production image with the root `Dockerfile` and
 `entrypoint.sh`. Python packages are managed by **uv 0.13.0** using `pyproject.toml`

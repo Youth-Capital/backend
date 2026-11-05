@@ -131,7 +131,24 @@ TEMPLATES = [
 # Database
 # --------------------------------------------------------------------------
 _database_url = env("DATABASE_URL")
-if _database_url:
+if any(env(name, default="") for name in ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER")):
+    # Shared-host deployment supplies explicit application connection settings.
+    # Keep DATABASE_URL and POSTGRES_* compatibility for existing environments.
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": env("DB_NAME"),
+            "USER": env("DB_USER"),
+            "PASSWORD": env("POSTGRES_PASSWORD"),
+            "HOST": env("DB_HOST"),
+            "PORT": env.int("DB_PORT"),
+            "CONN_MAX_AGE": 600,
+            "CONN_HEALTH_CHECKS": True,
+            "OPTIONS": {"sslmode": "require"}
+            if env.bool("DATABASE_SSL_REQUIRE", default=True) else {},
+        }
+    }
+elif _database_url:
     import dj_database_url
 
     DATABASES = {
