@@ -241,6 +241,118 @@ def change_password(user: User, current_password: str, new_password: str) -> Non
     _revoke_all_sessions(user)
 
 
+#: What a closed account's address becomes. The column is unique and the row
+#: stays, so the address has to go somewhere that can never collide with a real
+#: one — `.invalid` is reserved by RFC 2606 precisely so that it cannot.
+DELETED_EMAIL_TEMPLATE = "deleted-{id}@deleted.invalid"
+
+
+@transaction.atomic
+def delete_own_account(user: User, current_password: str) -> None:
+    """Close an account at the request of the person who owns it.
+
+    The row is not dropped. Deleting it would take with it things that are not
+    the account holder's to erase — the applications an employer received, the
+    moderation decisions taken on a course, the audit trail that says who did
+    what — and several of those relations are PROTECT, so the delete would not
+    even complete. What happens instead is that everything pointing *at the
+    person* is removed or emptied, and what remains is an anonymous stub that
+    nothing can be signed in to.
+
+    Removed outright: the documents the account holder authored and nobody
+    else relies on — CVs, portfolio items and their files, education and
+    experience entries. Emptied: the name, the city, the biography, the
+    avatar, the phone. Replaced: the address, with an unroutable stub. The
+    password is made unusable and every outstanding session is blacklisted, so
+    the account cannot be re-entered even by someone holding the old one.
+
+    Irreversible on purpose, and the caller is told so before it is offered:
+    a grace period would be kinder, but a deletion that quietly keeps the data
+    for a fortnight is not the thing the person asked for.
+    """
+    if not user.check_password(current_password):
+        raise DomainError("Current password is incorrect.", code="invalid_password")
+
+    # The same guard the admin endpoint applies to deactivation. An
+    # administrator closing their own account can lock everybody else out of
+    # the controls needed to undo it.
+    if user.role == Role.ADMIN or user.is_superuser:
+        raise NotAllowed(
+            "An administrator account cannot be closed from here.",
+            code="admin_self_delete",
+        )
+
+    _erase_authored_documents(user)
+    _empty_profile(user)
+
+    user.email = DELETED_EMAIL_TEMPLATE.format(id=user.id)
+    user.phone = None
+    user.is_active = False
+    user.email_verified = False
+    user.set_unusable_password()
+    user.save(
+        update_fields=[
+            "email",
+            "phone",
+            "is_active",
+            "email_verified",
+            "password",
+            "updated_at",
+        ]
+    )
+
+    _revoke_all_sessions(user)
+
+
+def _erase_authored_documents(user: User) -> None:
+    """Drop what the account holder wrote and nobody else depends on.
+
+    These models extend BaseModel rather than SoftDeleteModel, so `delete()`
+    really removes the row. That is the point: a soft delete would leave the
+    title and the text of every portfolio item sitting in the table, which is
+    the opposite of what was asked for.
+    """
+    from apps.cv.models import CVDocument, PortfolioItem, PublicProfile
+    from apps.experience.models import Experience
+    from apps.profiles.models import Education
+
+    for item in PortfolioItem.objects.filter(user=user):
+        # The uploads go with the rows. Dropping the row alone would leave the
+        # file on disk, reachable by anyone who still holds a signed link.
+        for field in (item.file, item.cover):
+            if field:
+                field.delete(save=False)
+
+    PortfolioItem.objects.filter(user=user).delete()
+    CVDocument.objects.filter(user=user).delete()
+    PublicProfile.objects.filter(user=user).delete()
+    Education.objects.filter(user=user).delete()
+    Experience.objects.filter(user=user).delete()
+
+
+def _empty_profile(user: User) -> None:
+    """Empty every field on the role profile that names the person."""
+    profile = getattr(user, "student_profile", None)
+    if profile is not None:
+        if profile.avatar:
+            profile.avatar.delete(save=False)
+        profile.first_name = ""
+        profile.last_name = ""
+        profile.city = ""
+        profile.languages = []
+        profile.avatar = None
+        profile.save(
+            update_fields=[
+                "first_name",
+                "last_name",
+                "city",
+                "languages",
+                "avatar",
+                "updated_at",
+            ]
+        )
+
+
 #: New-device emails one account may receive in an hour. Every new device is
 #: still recorded and shown in the app; only the mail is capped. Somebody with
 #: the password could otherwise sign in from a stream of invented browsers and

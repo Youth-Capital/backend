@@ -31,6 +31,7 @@ from ..email_verification import (
 from ..models import Consent, User
 from ..services import (
     change_password,
+    delete_own_account,
     create_password_reset,
     grant_consent,
     register_user,
@@ -40,6 +41,7 @@ from ..services import (
 )
 from .serializers import (
     ChangePasswordSerializer,
+    DeleteAccountSerializer,
     ConsentSerializer,
     LoginSerializer,
     PasswordResetConfirmSerializer,
@@ -298,6 +300,52 @@ class ChangePasswordView(APIView):
             obj=request.user,
             actor=request.user,
             severity=AuditSeverity.NOTICE,
+        )
+        response = Response(status=status.HTTP_204_NO_CONTENT)
+        return clear_refresh_cookie(response)
+
+
+class DeleteAccountView(APIView):
+    """Close your own account.
+
+    On the same tight budget as signing in and changing a password: the body
+    carries a password, so a caller who guesses at it must be made to wait the
+    same way they are at the sign-in form.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
+    allow_unverified_email = True
+
+    @extend_schema(
+        request=DeleteAccountSerializer,
+        responses={204: None},
+        tags=["auth"],
+        description=(
+            "Irreversibly closes the signed-in account: the documents it "
+            "authored are removed, every field that names the person is "
+            "emptied, the address is replaced with an unroutable stub and all "
+            "sessions are revoked."
+        ),
+    )
+    def post(self, request):
+        serializer = DeleteAccountSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        delete_own_account(request.user, serializer.validated_data["current_password"])
+
+        # The entry records that this account was closed and by whom, and it
+        # does it with the account's id, which `obj` already supplies. Writing
+        # the old address into the trail would put back the one piece of data
+        # the request was made to remove — and an audit log is exactly the
+        # place nobody thinks to go looking for it afterwards.
+        log_action(
+            action=AuditAction.DELETE,
+            obj=request.user,
+            actor=request.user,
+            severity=AuditSeverity.WARNING,
+            note="account closed by its owner",
         )
         response = Response(status=status.HTTP_204_NO_CONTENT)
         return clear_refresh_cookie(response)

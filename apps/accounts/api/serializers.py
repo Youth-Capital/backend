@@ -157,6 +157,18 @@ class ChangePasswordSerializer(serializers.Serializer):
         return value
 
 
+class DeleteAccountSerializer(serializers.Serializer):
+    """Closing an account asks for the password again.
+
+    The session alone is not enough authority for something irreversible: a
+    borrowed laptop with a tab still open is the ordinary case, not the exotic
+    one. Asking for the password puts the decision with the account holder
+    rather than with whoever is sitting in front of the screen.
+    """
+
+    current_password = serializers.CharField(write_only=True)
+
+
 class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
