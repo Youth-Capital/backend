@@ -70,4 +70,21 @@ PY
 python manage.py check --fail-level ERROR
 python manage.py check --deploy --tag security --fail-level WARNING
 python manage.py migrate --noinput
+
+# Reference data the platform cannot function without: regions, skills, the
+# capital axes, and the professions every other screen is built around.
+#
+# It belongs here next to `migrate` because it is the same kind of thing — a
+# schema is useless without the rows the product assumes exist — and because
+# leaving it to be remembered by hand is how a freshly provisioned database
+# ends up serving a career page whose only option is "Not specified", an
+# intake question with nothing to answer it with, and a plan page demanding a
+# profession that cannot be chosen. That is exactly what shipped.
+#
+# Safe on every boot: without --reset the command is update_or_create all the
+# way down, so an already-seeded database comes out of it unchanged. It is
+# allowed to fail the start, like migrate, because a platform without this
+# data is not one worth serving.
+python manage.py seed_taxonomy
+
 exec gunicorn -c deploy/gunicorn/gunicorn.conf.py config.wsgi:application

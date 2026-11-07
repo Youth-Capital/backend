@@ -99,6 +99,38 @@ def test_the_profile_is_emptied(auth, furnished):
     assert profile.city == ""
 
 
+def test_every_field_that_describes_the_person_is_emptied(auth, student, taxonomy):
+    """The list is the whole guard: a field left off it survives a deletion,
+    and nothing else in the code would ever point that out."""
+    from datetime import date
+
+    from apps.accounts.services import STUDENT_PROFILE_PII
+
+    profile = student.student_profile
+    profile.middle_name = "Middle"
+    profile.birth_date = date(2004, 5, 1)
+    profile.bio = "Something personal."
+    profile.city = "Tashkent"
+    profile.institution = "INHA"
+    profile.study_year = 3
+    profile.languages = [{"code": "ru", "level": "B2"}]
+    profile.save()
+    # `interests` points at skill categories, not at skills.
+    profile.interests.add(taxonomy["sql"].category)
+
+    auth(student).post(URL, {"current_password": PASSWORD}, format="json")
+
+    profile.refresh_from_db()
+    for field, blank in STUDENT_PROFILE_PII.items():
+        if field == "region":
+            assert profile.region_id is None
+        elif field == "avatar":
+            assert not profile.avatar
+        else:
+            assert getattr(profile, field) == blank, field
+    assert profile.interests.count() == 0
+
+
 def test_the_documents_the_account_wrote_are_removed(auth, furnished):
     auth(furnished).post(URL, {"current_password": PASSWORD}, format="json")
 

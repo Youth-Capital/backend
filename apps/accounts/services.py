@@ -330,27 +330,52 @@ def _erase_authored_documents(user: User) -> None:
     Experience.objects.filter(user=user).delete()
 
 
+#: Everything on a student profile that describes the person rather than the
+#: record, with the value it goes back to. Written as a table because the list
+#: is the whole point: a field left off it is a field that quietly survives a
+#: deletion, and the only way to notice is to read the model next to this.
+#:
+#: Deliberately absent: `youth_id`, which identifies the row and not the human
+#: and is what the remaining records are joined on; the status and counter
+#: columns, which carry no description of anybody; and `target_profession`,
+#: which is a pointer into a public catalogue.
+STUDENT_PROFILE_PII = {
+    "first_name": "",
+    "last_name": "",
+    "middle_name": "",
+    "birth_date": None,
+    "bio": "",
+    "city": "",
+    "institution": "",
+    "study_year": None,
+    "region": None,
+    "languages": [],
+    "avatar": None,
+}
+
+
 def _empty_profile(user: User) -> None:
-    """Empty every field on the role profile that names the person."""
+    """Empty every field on the role profile that describes the person."""
+    from apps.profiles.models import Gender
+
     profile = getattr(user, "student_profile", None)
-    if profile is not None:
-        if profile.avatar:
-            profile.avatar.delete(save=False)
-        profile.first_name = ""
-        profile.last_name = ""
-        profile.city = ""
-        profile.languages = []
-        profile.avatar = None
-        profile.save(
-            update_fields=[
-                "first_name",
-                "last_name",
-                "city",
-                "languages",
-                "avatar",
-                "updated_at",
-            ]
-        )
+    if profile is None:
+        return
+
+    if profile.avatar:
+        # The file goes too. Clearing the column alone leaves the photograph
+        # on disk, reachable by anyone who still holds a link to it.
+        profile.avatar.delete(save=False)
+
+    for field, blank in STUDENT_PROFILE_PII.items():
+        setattr(profile, field, blank)
+    # Gender is a choice field with its own "undisclosed" member, so it goes
+    # back to that rather than to an empty string the column would reject.
+    profile.gender = Gender.UNDISCLOSED
+    profile.save(update_fields=[*STUDENT_PROFILE_PII, "gender", "updated_at"])
+
+    # A many-to-many is not a column and is not covered by the save above.
+    profile.interests.clear()
 
 
 #: New-device emails one account may receive in an hour. Every new device is
