@@ -426,6 +426,23 @@ EXTERNAL_COURSE_PLATFORMS = {
     "coursera.org": "Coursera",
 }
 
+# The job boards an external vacancy may point at, and the source it counts as.
+#
+# An allowlist rather than "any https URL" for the same reason the course one
+# is: these links are handed to students from a page carrying the platform's
+# name, and that is an endorsement whether or not it is meant as one. Adding a
+# board here is a decision somebody makes on purpose.
+#
+# t.me is on the list because several internships in Uzbekistan are posted
+# only as Telegram messages — the channel post is the vacancy, and refusing it
+# would mean dropping real openings rather than protecting anybody.
+EXTERNAL_VACANCY_PLATFORMS = {
+    "olx.uz": "OLX",
+    "cloz.uz": "CLOZ",
+    "career.habr.com": "HABR",
+    "t.me": "TELEGRAM",
+}
+
 # The ceiling on decoded image size, in megapixels.
 #
 # File size is not the limit that matters here: a single-colour PNG of 20000 x

@@ -42,6 +42,12 @@ ADMIN_SURFACES = {
 
 #: Shared reference data — regions, skills, professions. Not personal, and the
 #: product is unusable if a learner cannot read the skill list.
+#:
+#: ExternalVacancyViewSet belongs here for the same reason and not by
+#: exception: the rows are public job adverts somebody else published, held
+#: here only as a card and a link out. There is no caller to narrow them to —
+#: every student sees the same board, exactly as they would on OLX — and the
+#: set carries nothing about anybody. The queryset still hides retired rows.
 PUBLIC_REFERENCE = {
     "RegionViewSet",
     "ProfessionViewSet",
@@ -49,6 +55,7 @@ PUBLIC_REFERENCE = {
     "SkillCategoryViewSet",
     "CapitalDimensionViewSet",
     "SkillDimensionViewSet",
+    "ExternalVacancyViewSet",
 }
 
 #: Row-returning views whose scoping lives in an explicit per-action check

@@ -87,4 +87,15 @@ python manage.py migrate --noinput
 # data is not one worth serving.
 python manage.py seed_taxonomy
 
+# The reviewed list of jobs posted on other boards, for the same reason and in
+# the same place: it lives in a file in this repository, so the deploy that
+# brings the file is the moment to load it. Leaving it to a hand-run command
+# is how the profession catalogue ended up empty in production.
+#
+# Idempotent by address — a second run refreshes what changed and adds what is
+# new. Listings absent from the file are left visible rather than retired,
+# which is `--deactivate-missing` and a deliberate decision, not a side effect
+# of a deploy.
+python manage.py import_external_vacancies
+
 exec gunicorn -c deploy/gunicorn/gunicorn.conf.py config.wsgi:application

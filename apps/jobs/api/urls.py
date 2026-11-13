@@ -7,6 +7,7 @@ from .views import (
     InterviewInviteViewSet,
     InterviewViewSet,
     PlacementViewSet,
+    ExternalVacancyViewSet,
     SavedVacancyViewSet,
     VacancyViewSet,
 )
@@ -21,6 +22,7 @@ router.register(
     "interview-invites", InterviewInviteViewSet, basename="interview-invite"
 )
 router.register("saved", SavedVacancyViewSet, basename="saved-vacancy")
+router.register("external", ExternalVacancyViewSet, basename="external-vacancy")
 router.register("placements", PlacementViewSet, basename="placement")
 
 urlpatterns = [

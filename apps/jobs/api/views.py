@@ -18,6 +18,7 @@ from apps.common.throttling import CandidateSearchThrottle
 
 from ..models import (
     Application,
+    ExternalVacancy,
     Interview,
     Placement,
     SavedVacancy,
@@ -34,6 +35,7 @@ from ..services import (
     withdraw_application,
 )
 from .serializers import (
+    ExternalVacancySerializer,
     ApplicationSerializer,
     CreateApplicationSerializer,
     EmployerApplicationSerializer,
@@ -1124,3 +1126,22 @@ class InterviewInviteViewSet(viewsets.ModelViewSet):
             raise NotAllowed("Only the employer can withdraw an invitation.")
         cancel_invite(invite, actor=request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ExternalVacancyViewSet(viewsets.ReadOnlyModelViewSet):
+    """Part-time work posted on other boards, reviewed and linked out to.
+
+    Read-only on purpose: these rows come from a file somebody maintains and
+    an import command, not from anybody typing into the product. There is no
+    application flow behind them either — the whole point of the card is the
+    link away from here.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = ExternalVacancySerializer
+    filterset_fields = ["source", "fit"]
+    search_fields = ["title", "company", "city", "note"]
+    ordering_fields = ["collected_on", "title"]
+
+    def get_queryset(self):
+        return ExternalVacancy.objects.filter(is_active=True)

@@ -7,6 +7,7 @@ from apps.common.serializers import TranslatedField
 from ..models import (
     Application,
     ApplicationEvent,
+    ExternalVacancy,
     Interview,
     InterviewInvite,
     Placement,
@@ -454,3 +455,32 @@ class CandidateSerializer(serializers.Serializer):
     skills = serializers.ListField()
     missing_skills = serializers.ListField()
     explanation = serializers.ListField()
+
+
+class ExternalVacancySerializer(serializers.ModelSerializer):
+    """A listing on somebody else's board, as the card needs it.
+
+    `source_label` is sent alongside the code because the button says it —
+    "Open on OLX" — and the client should not be holding its own copy of that
+    mapping to get the wording right.
+    """
+
+    source_label = serializers.CharField(source="get_source_display", read_only=True)
+
+    class Meta:
+        model = ExternalVacancy
+        fields = [
+            "id",
+            "source",
+            "source_label",
+            "external_url",
+            "title",
+            "company",
+            "city",
+            "schedule",
+            "pay",
+            "fit",
+            "note",
+            "collected_on",
+        ]
+        read_only_fields = fields

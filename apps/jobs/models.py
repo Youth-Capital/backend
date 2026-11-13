@@ -497,3 +497,87 @@ class InterviewInvite(BaseModel):
     @property
     def is_open(self) -> bool:
         return self.status == InviteStatus.PENDING
+
+
+class VacancySource(models.TextChoices):
+    """Where an external listing was found.
+
+    Named rather than free text because the value is shown to the student on
+    the card — "Open on OLX" has to say OLX — and because the allowlist of
+    hosts these may point at is keyed on the same idea.
+    """
+
+    OLX = "OLX", _("OLX")
+    CLOZ = "CLOZ", _("cloz.uz")
+    HABR = "HABR", _("Habr Career")
+    TELEGRAM = "TELEGRAM", _("Telegram")
+
+
+class ExternalFit(models.TextChoices):
+    """How well a listing actually suits a student, as a human judged it.
+
+    The distinction is the point of collecting these at all. A board returns
+    hundreds of postings that say "students welcome" and then ask for a year
+    of experience or a full day in an office; somebody read each of these and
+    decided which it was. Shown on the card, so the reader knows before they
+    click whether there is a catch and what it is.
+    """
+
+    FITS = "FITS", _("Fits")
+    CAVEATS = "CAVEATS", _("Fits with caveats")
+
+
+class ExternalVacancy(BaseModel):
+    """A job posted somewhere else that a student can be pointed at.
+
+    Deliberately not a `Vacancy`. That model belongs to an employer on this
+    platform and carries the whole hiring flow behind it — applications,
+    interviews, vacancy tests, matching, moderation. None of that applies to a
+    listing on OLX: there is no employer account to attach it to, nothing to
+    apply to here, and nobody to interview. Forcing one into the other would
+    have meant inventing an employer account per board and then auditing
+    twenty-one places that assume `vacancy.employer` is a real company.
+
+    What a student gets instead is a short, honest card and a link out.
+    """
+
+    source = models.CharField(max_length=10, choices=VacancySource.choices)
+    #: The listing itself. Unique, because the same job posted twice is the
+    #: same job, and the import is expected to be run repeatedly.
+    external_url = models.URLField(max_length=500, unique=True)
+
+    title = models.CharField(max_length=200)
+    company = models.CharField(max_length=160, blank=True)
+    city = models.CharField(max_length=120, blank=True)
+
+    #: Free text, in the language it was published in. These boards write pay
+    #: and hours as prose — "17:00–21:00", "2–8 млн (сдельно)", "~300 тыс за
+    #: смену" — and parsing that into numbers would invent a precision the
+    #: source does not have.
+    schedule = models.CharField(max_length=200, blank=True)
+    pay = models.CharField(max_length=200, blank=True)
+
+    fit = models.CharField(
+        max_length=8, choices=ExternalFit.choices, default=ExternalFit.FITS
+    )
+    #: What the catch is, when there is one.
+    note = models.TextField(blank=True, max_length=600)
+
+    #: When the listing was read and judged, not when it was published: that
+    #: is the date that tells a reader how stale this card may be.
+    collected_on = models.DateField()
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "jobs_external_vacancy"
+        # Descending, so FITS sorts above CAVEATS: a reader should meet the
+        # listings with no catch before the ones that have one.
+        ordering = ["-fit", "-collected_on", "title"]
+        indexes = [
+            models.Index(fields=["is_active", "fit"]),
+            models.Index(fields=["source"]),
+        ]
+        verbose_name_plural = "external vacancies"
+
+    def __str__(self) -> str:
+        return f"{self.title} ({self.get_source_display()})"
