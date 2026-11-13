@@ -31,6 +31,7 @@ from ..email_verification import (
 from ..models import Consent, User
 from ..services import (
     change_password,
+    create_first_admin,
     delete_own_account,
     create_password_reset,
     grant_consent,
@@ -40,6 +41,7 @@ from ..services import (
     revoke_consent,
 )
 from .serializers import (
+    AdminSetupSerializer,
     ChangePasswordSerializer,
     DeleteAccountSerializer,
     ConsentSerializer,
@@ -450,3 +452,48 @@ def _send_reset_email(user, token: str) -> None:
         recipient_list=[user.email],
         fail_silently=True,
     )
+
+
+class AdminSetupView(APIView):
+    """Create the first administrator, once, from a secret held by the server.
+
+    Open to anyone in the sense that it needs no session — it has to be, since
+    the account that could authorise it is the account being created. What
+    actually guards it is a token that exists only in the server's environment
+    and a hard refusal to run at all once an administrator exists.
+
+    On the sign-in budget, because the body carries a secret and a caller
+    guessing at it should wait exactly as long as one guessing a password.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
+
+    @extend_schema(
+        request=AdminSetupSerializer,
+        responses={201: dict},
+        tags=["auth"],
+        description=(
+            "Creates the platform's first administrator. Requires the setup "
+            "token configured on the server, and refuses once any "
+            "administrator exists."
+        ),
+    )
+    def post(self, request):
+        serializer = AdminSetupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        user = create_first_admin(
+            email=data["email"],
+            password=data["password"],
+            token=data["token"],
+            ip=get_client_ip(request),
+            user_agent=request.headers.get("User-Agent", ""),
+        )
+        # No tokens are issued here. Creating the account and signing into it
+        # are separate acts, and the second one goes through the ordinary
+        # sign-in path with its own lockout and device notice.
+        return Response({"email": user.email}, status=status.HTTP_201_CREATED)

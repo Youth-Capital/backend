@@ -198,6 +198,19 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.ScryptPasswordHasher",
 ]
 
+# The shared secret that arms first-admin setup, and nothing else.
+#
+# A platform with no administrator cannot make one through its own interface:
+# every route that grants the role already requires the role. The usual way
+# out is a shell on the server, which the people who need the account do not
+# always have. This is the other way out — a secret set in the server's
+# environment, which turns on one page, once, while there is still no admin
+# to protect.
+#
+# Empty by default, which is off. It is read from the environment and never
+# written to the repository, a log or an audit entry.
+ADMIN_SETUP_TOKEN = env("ADMIN_SETUP_TOKEN", default="")
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {

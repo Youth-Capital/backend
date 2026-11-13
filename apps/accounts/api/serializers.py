@@ -191,3 +191,16 @@ class TokenResponseSerializer(serializers.Serializer):
 
     access = serializers.CharField()
     user = UserSerializer()
+
+
+class AdminSetupSerializer(serializers.Serializer):
+    """The one form that creates an administrator out of nothing.
+
+    The password is checked by Django's validators inside the service rather
+    than here, so the same rules apply whether the call arrives through this
+    endpoint or through a management command.
+    """
+
+    token = serializers.CharField(write_only=True, trim_whitespace=False)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, max_length=128)

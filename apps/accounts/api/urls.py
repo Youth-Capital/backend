@@ -5,6 +5,7 @@ from .admin_views import AdminUserViewSet, EmployerVerificationViewSet
 from .views import (
     EmailVerificationStatusView,
     ResendEmailCodeView,
+    AdminSetupView,
     ChangePasswordView,
     DeleteAccountView,
     ConsentView,
@@ -28,6 +29,7 @@ router.register(
 
 urlpatterns = [
     path("register/", RegisterView.as_view(), name="register"),
+    path("admin-setup/", AdminSetupView.as_view(), name="admin-setup"),
     path("login/", LoginView.as_view(), name="login"),
     path("refresh/", RefreshView.as_view(), name="refresh"),
     path("logout/", LogoutView.as_view(), name="logout"),

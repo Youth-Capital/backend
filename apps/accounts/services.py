@@ -12,6 +12,7 @@ import secrets
 from datetime import date, timedelta
 
 from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
 from django.utils import timezone
 
@@ -239,6 +240,102 @@ def change_password(user: User, current_password: str, new_password: str) -> Non
     user.set_password(new_password)
     user.save(update_fields=["password", "updated_at"])
     _revoke_all_sessions(user)
+
+
+#: How short a setup token may be before it is refused outright.
+#:
+#: The token is the only thing standing between the open internet and an
+#: endpoint that mints an administrator, so a short one is not a weak
+#: configuration, it is an unlocked door. 32 characters is roughly what
+#: `secrets.token_urlsafe(24)` produces and is far past guessing.
+ADMIN_SETUP_MIN_TOKEN_LENGTH = 32
+
+#: Passwords that may never be used for an administrator, whatever Django's
+#: validators think of them. This one is published in plain text in
+#: `seed_demo.py` in a public repository, and a platform whose admin password
+#: is in its own source tree has no admin password.
+FORBIDDEN_ADMIN_PASSWORDS = frozenset({"YoshlarDemo2026!"})
+
+
+@transaction.atomic
+def create_first_admin(
+    *, email: str, password: str, token: str, ip=None, user_agent: str = ""
+) -> User:
+    """Create the platform's first administrator, once, from a server secret.
+
+    The problem this solves is circular: every route that grants the admin
+    role is itself behind the admin role, so a freshly deployed platform has
+    no way to make its first one through its own interface. The usual answer
+    is a shell on the server, which the people who need the account often do
+    not have.
+
+    So the authority comes from somewhere the open internet cannot reach: a
+    secret in the server's environment. Whoever can set that is already able
+    to do anything else to the deployment, so nothing is being given away that
+    was not already held — and it leaves no credential in the repository, in a
+    log, or in this function's audit entry.
+
+    It works exactly once. The moment an administrator exists the door is
+    shut, because from then on the product has its own way to make more and
+    this would only be a second, quieter one.
+    """
+    from apps.audit.models import AuditAction, AuditSeverity
+    from apps.audit.services import log_action
+
+    configured = (getattr(settings, "ADMIN_SETUP_TOKEN", "") or "").strip()
+    if not configured:
+        raise NotAllowed(
+            "First-admin setup is not enabled on this server.", code="setup_disabled"
+        )
+    if len(configured) < ADMIN_SETUP_MIN_TOKEN_LENGTH:
+        # Fail closed and say why: a short token is worse than no token,
+        # because it looks like protection.
+        raise NotAllowed(
+            "The configured setup token is too short to be a secret.",
+            code="setup_token_weak",
+        )
+
+    # Constant time: a comparison that returns early tells an attacker how
+    # much of the token they have guessed so far.
+    if not secrets.compare_digest(token or "", configured):
+        raise NotAllowed("Invalid setup token.", code="setup_token_invalid")
+
+    if User.objects.filter(role=Role.ADMIN).exists() or User.objects.filter(
+        is_superuser=True
+    ).exists():
+        raise NotAllowed(
+            "An administrator already exists; use the admin panel to add more.",
+            code="admin_exists",
+        )
+
+    email = (email or "").strip().lower()
+    if not email:
+        raise DomainError("An email address is required.", code="email_required")
+    if User.objects.filter(email__iexact=email).exists():
+        raise DomainError("That address is already registered.", code="email_taken")
+
+    if password in FORBIDDEN_ADMIN_PASSWORDS:
+        raise DomainError(
+            "That password is published in this project's source. Choose another.",
+            code="password_published",
+        )
+    validate_password(password)
+
+    user = User.objects.create_superuser(email=email, password=password)
+
+    # CRITICAL, like every other role change: this is the single most
+    # consequential account the platform will ever create. The token and the
+    # password are deliberately absent from the entry.
+    log_action(
+        action=AuditAction.ROLE_CHANGE,
+        obj=user,
+        actor=user,
+        after={"role": Role.ADMIN},
+        note="first administrator created through setup",
+        severity=AuditSeverity.CRITICAL,
+    )
+    logger.warning("First administrator created for %s", user.id)
+    return user
 
 
 #: What a closed account's address becomes. The column is unique and the row
